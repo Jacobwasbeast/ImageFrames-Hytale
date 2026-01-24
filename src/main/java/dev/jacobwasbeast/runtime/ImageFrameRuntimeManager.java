@@ -543,7 +543,7 @@ public class ImageFrameRuntimeManager {
                                 .schedule(() -> world.execute(() -> {
                                     placeTiles(world, info, group);
                                     store.putGroup(group);
-                                }), 5000, java.util.concurrent.TimeUnit.MILLISECONDS);
+                                }), 1000, java.util.concurrent.TimeUnit.MILLISECONDS);
                         if (onSuccess != null) {
                             onSuccess.run();
                         }
