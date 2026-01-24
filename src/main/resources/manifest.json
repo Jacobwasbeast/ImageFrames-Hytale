@@ -1,0 +1,22 @@
+{
+    "Group": "Jacobwasbeast",
+    "Name": "image_frames",
+    "Version": "0.1.0",
+    "Description": "ImageFrames mod",
+    "Authors": [
+        {
+            "Name": "Jacobwasbeast"
+        }
+    ],
+    "Website": "",
+    "ServerVersion": "*",
+    "Dependencies": {
+        
+    },
+    "OptionalDependencies": {
+        
+    },
+    "DisabledByDefault": false,
+    "Main": "dev.jacobwasbeast.ImageFramesPlugin",
+    "IncludesAssetPack": true
+}

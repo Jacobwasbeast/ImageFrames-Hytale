@@ -1,0 +1,47 @@
+{
+  "TranslationProperties": {
+    "Name": "imageFrames.item.frame.name",
+    "Description": "imageFrames.item.frame.description"
+  },
+  "Category": "Blocks",
+  "ItemLevel": 1,
+  "MaxStack": 64,
+  "Icon": "Icons/ItemsGenerated/ImageFrames/Frame.png",
+  "BlockType": {
+    "Material": "Solid",
+    "DrawType": "Cube",
+    "Textures": [
+      {
+        "All": "Blocks/ImageFrames/Frame.png",
+        "Weight": 1
+      }
+    ],
+    "ParticleColor": "#888888",
+    "BlockSoundSetId": "Wood",
+    "BlockBreakingDecalId": "Breaking_Decals_Wood",
+    "BlockParticleSetId": "Wood",
+    "Gathering": {
+      "Breaking": {
+        "GatherType": "Block"
+      }
+    },
+    "Flags": {
+      "IsUsable": true
+    },
+    "Interactions": {
+      "Use": "ImageFrames_Use"
+    }
+  },
+  "Utility": {
+    "Usable": true
+  },
+  "PlayerAnimationsId": "Block",
+  "ItemSoundSetId": "ISS_Blocks_Wood",
+  "Interactions": {
+    "Primary": "Block_Primary",
+    "Secondary": "Block_Secondary"
+  },
+  "Tags": {
+    "Type": ["Block"]
+  }
+}

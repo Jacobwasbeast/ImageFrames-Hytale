@@ -1,0 +1,11 @@
+customUI.title = Image Frames
+customUI.urlLabel = Image URL
+customUI.urlPlaceholder = https://example.com/image.png
+customUI.fitLabel = Fit Mode
+customUI.fitPlaceholder = stretch, crop, or contain
+customUI.rotationLabel = Rotation
+customUI.rotationPlaceholder = 0, 90, 180, 270
+customUI.apply = Apply
+customUI.cancel = Cancel
+item.frame.name = Image Frame
+item.frame.description = Place frames and set an image via URL.

@@ -1,0 +1,228 @@
+package dev.jacobwasbeast.ui;
+
+import com.hypixel.hytale.codec.Codec;
+import com.hypixel.hytale.codec.KeyedCodec;
+import com.hypixel.hytale.codec.builder.BuilderCodec;
+import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.protocol.packets.interface_.CustomPageLifetime;
+import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBindingType;
+import com.hypixel.hytale.protocol.packets.interface_.Page;
+import com.hypixel.hytale.server.core.Message;
+import com.hypixel.hytale.server.core.entity.InteractionContext;
+import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.entity.entities.player.pages.InteractiveCustomUIPage;
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
+import com.hypixel.hytale.server.core.modules.interaction.interaction.config.Interaction;
+import com.hypixel.hytale.server.core.ui.builder.EventData;
+import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
+import com.hypixel.hytale.server.core.ui.builder.UIEventBuilder;
+import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.math.vector.Vector3i;
+import com.hypixel.hytale.math.vector.Vector4d;
+import com.hypixel.hytale.protocol.BlockPosition;
+import com.hypixel.hytale.server.core.universe.PlayerRef;
+import com.hypixel.hytale.server.core.universe.world.World;
+import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import dev.jacobwasbeast.ImageFramesPlugin;
+import dev.jacobwasbeast.store.ImageFrameStore.FrameGroup;
+import javax.annotation.Nonnull;
+
+public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConfigPage.FramePageData> {
+    private final ImageFramesPlugin plugin;
+    private final PlayerRef playerRef;
+    private final Vector3i blockPos;
+    private final InteractionContext interactionContext;
+
+    public ImageFrameConfigPage(ImageFramesPlugin plugin, PlayerRef playerRef, Vector3i blockPos, InteractionContext interactionContext) {
+        super(playerRef, CustomPageLifetime.CanDismiss, FramePageData.CODEC);
+        this.plugin = plugin;
+        this.playerRef = playerRef;
+        this.blockPos = blockPos;
+        this.interactionContext = interactionContext;
+    }
+
+    @Override
+    public void build(@Nonnull Ref<EntityStore> ref, @Nonnull UICommandBuilder commandBuilder,
+            @Nonnull UIEventBuilder eventBuilder, @Nonnull Store<EntityStore> store) {
+        commandBuilder.append("Pages/ImageFrames/ImageFrameConfig.ui");
+
+        var world = store.getExternalData().getWorld();
+        FrameGroup group = null;
+        if (blockPos != null && world != null) {
+            group = plugin.getStore().getGroupByPos(world.getName(), blockPos);
+        }
+
+        if (group != null) {
+            if (group.url != null) {
+                commandBuilder.set("#UrlInput.Value", group.url);
+            }
+            if (group.fit != null) {
+                commandBuilder.set("#FitInput.Value", group.fit);
+            }
+            commandBuilder.set("#RotationInput.Value", String.valueOf(group.rot));
+        }
+
+        addEventBindings(eventBuilder);
+    }
+
+    @Override
+    public void handleDataEvent(@Nonnull Ref<EntityStore> ref, @Nonnull Store<EntityStore> store,
+            @Nonnull FramePageData data) {
+        Player player = store.getComponent(ref, Player.getComponentType());
+        if (player == null) {
+            return;
+        }
+
+        if ("Cancel".equals(data.action)) {
+            player.getPageManager().setPage(ref, store, Page.None);
+            return;
+        }
+
+        if (!"Apply".equals(data.action)) {
+            return;
+        }
+
+        String url = data.url != null ? data.url.trim() : "";
+        String fit = data.fit != null && !data.fit.isEmpty() ? data.fit.trim() : "stretch";
+        int rot = parseInt(data.rotation, 0);
+
+        if (url.isEmpty()) {
+            playerRef.sendMessage(Message.raw("URL is required."));
+            return;
+        }
+
+        var world = store.getExternalData().getWorld();
+        if (world == null || blockPos == null) {
+            playerRef.sendMessage(Message.raw("Missing target block."));
+            return;
+        }
+
+        final String finalUrl = url;
+        final String finalFit = fit;
+        final int finalRot = rot;
+        store.getExternalData().getWorld().execute(() -> {
+            FrameGroup existing = plugin.getStore().getGroupByPos(world.getName(), blockPos);
+            String resolvedOwnerUuid = existing != null ? existing.ownerUuid : null;
+            if (plugin.getConfig().isOwnerLockEnabled()) {
+                if (resolvedOwnerUuid == null || resolvedOwnerUuid.isEmpty()) {
+                    resolvedOwnerUuid = playerRef.getUuid().toString();
+                } else if (!resolvedOwnerUuid.equals(playerRef.getUuid().toString())) {
+                    playerRef.sendMessage(Message.raw("This ImageFrame is locked by another player."));
+                    return;
+                }
+            }
+            final String finalOwnerUuid = resolvedOwnerUuid;
+
+            dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.GroupInfo info;
+            try {
+                info = plugin.getRuntimeManager().collectGroupInfo(world, blockPos);
+            } catch (Exception e) {
+                playerRef.sendMessage(Message.raw("Invalid frame layout: " + e.getMessage()));
+                return;
+            }
+
+            FrameGroup previousGroup = plugin.getStore().getGroupByPos(world.getName(), blockPos);
+            plugin.getRuntimeManager().placePlaceholder(world, info);
+
+            final String facing = resolveFacing(store, info);
+            java.util.concurrent.CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return plugin.getRuntimeManager().buildGroupAssets(info, finalUrl, finalFit, finalRot, finalOwnerUuid, facing);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    })
+                    .thenAccept(group -> world.execute(() -> {
+                        plugin.getRuntimeManager().applyGroupWhenReady(world, info, group, 20,
+                                () -> {
+                                    playerRef.sendMessage(Message.raw("ImageFrame updated."));
+                                    player.getPageManager().setPage(ref, store, Page.None);
+                                },
+                                () -> {
+                                    if (previousGroup != null) {
+                                        plugin.getRuntimeManager().applyGroup(world, info, previousGroup);
+                                    }
+                                    playerRef.sendMessage(Message.raw("ImageFrame assets are still loading. Try again in a moment."));
+                                });
+                    }))
+                    .exceptionally(ex -> {
+                        world.execute(() -> {
+                            if (previousGroup != null) {
+                                plugin.getRuntimeManager().applyGroup(world, info, previousGroup);
+                            }
+                            playerRef.sendMessage(Message.raw("Failed to apply image: " + ex.getMessage()));
+                        });
+                        return null;
+                    });
+        });
+    }
+
+    private void addEventBindings(UIEventBuilder eventBuilder) {
+        eventBuilder.addEventBinding(CustomUIEventBindingType.Activating, "#ApplyButton",
+                EventData.of("Action", "Apply").append("@Url", "#UrlInput.Value")
+                        .append("@Fit", "#FitInput.Value")
+                        .append("@Rotation", "#RotationInput.Value"),
+                false);
+        eventBuilder.addEventBinding(CustomUIEventBindingType.Activating, "#CancelButton",
+                EventData.of("Action", "Cancel"), false);
+    }
+
+
+    private int parseInt(String text, int fallback) {
+        if (text == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private String resolveFacing(Store<EntityStore> store, dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.GroupInfo info) {
+        Vector4d hitLocation = null;
+        Vector3i target = blockPos;
+        if (interactionContext != null) {
+            hitLocation = interactionContext.getMetaStore().getIfPresentMetaObject(Interaction.HIT_LOCATION);
+            if (target == null) {
+                BlockPosition raw = interactionContext.getMetaStore().getIfPresentMetaObject(Interaction.TARGET_BLOCK_RAW);
+                if (raw != null) {
+                    target = new Vector3i(raw.x, raw.y, raw.z);
+                }
+            }
+        }
+        Vector3d playerPos = null;
+        try {
+            var ref = playerRef.getReference();
+            if (ref != null && ref.isValid()) {
+                var transform = store.getComponent(ref, TransformComponent.getComponentType());
+                if (transform != null) {
+                    playerPos = transform.getPosition();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return plugin.getRuntimeManager().resolveFacing(info, hitLocation, target, playerPos);
+    }
+
+    public static class FramePageData {
+        public static final BuilderCodec<FramePageData> CODEC = BuilderCodec
+                .builder(FramePageData.class, FramePageData::new)
+                .append(new KeyedCodec<>("Action", Codec.STRING), (d, v) -> d.action = v, d -> d.action)
+                .add()
+                .append(new KeyedCodec<>("@Url", Codec.STRING), (d, v) -> d.url = v, d -> d.url)
+                .add()
+                .append(new KeyedCodec<>("@Fit", Codec.STRING), (d, v) -> d.fit = v, d -> d.fit)
+                .add()
+                .append(new KeyedCodec<>("@Rotation", Codec.STRING), (d, v) -> d.rotation = v, d -> d.rotation)
+                .add()
+                .build();
+
+        public String action;
+        public String url;
+        public String fit;
+        public String rotation;
+    }
+}

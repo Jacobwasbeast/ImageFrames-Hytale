@@ -1,0 +1,90 @@
+$C = "../../Common.ui";
+
+$C.@PageOverlay {}
+
+$C.@Container {
+    Anchor: (Width: 520, Height: 420);
+
+    #Title {
+        Group {
+            $C.@Title {
+               @Text = %imageFrames.customUI.title;
+            }
+        }
+    }
+
+    #Content {
+        LayoutMode: Top;
+
+        Group {
+            LayoutMode: Top;
+            Background: $C.@InputBoxBackground;
+            Padding: (Full: 12);
+
+            Label {
+                Text: %imageFrames.customUI.urlLabel;
+                Style: LabelStyle(
+                    TextColor: #FFFFFF,
+                    FontSize: 16,
+                    RenderBold: true
+                );
+            }
+
+            $C.@TextField #UrlInput {
+                @Anchor = (Top: 6, Left: 4, Right: 4, Height: 34);
+                PlaceholderText: %imageFrames.customUI.urlPlaceholder;
+            }
+
+            Group { Anchor: (Height: 10); }
+
+            Label {
+                Text: %imageFrames.customUI.fitLabel;
+                Style: LabelStyle(
+                    TextColor: #FFFFFF,
+                    FontSize: 16,
+                    RenderBold: true
+                );
+            }
+
+            $C.@TextField #FitInput {
+                @Anchor = (Top: 6, Left: 4, Right: 4, Height: 34);
+                PlaceholderText: %imageFrames.customUI.fitPlaceholder;
+            }
+
+            Group { Anchor: (Height: 10); }
+
+            Label {
+                Text: %imageFrames.customUI.rotationLabel;
+                Style: LabelStyle(
+                    TextColor: #FFFFFF,
+                    FontSize: 16,
+                    RenderBold: true
+                );
+            }
+
+            $C.@TextField #RotationInput {
+                @Anchor = (Top: 6, Left: 4, Right: 4, Height: 34);
+                PlaceholderText: %imageFrames.customUI.rotationPlaceholder;
+            }
+        }
+
+        Group {
+            LayoutMode: Left;
+            Anchor: (Top: 16);
+
+            $C.@TextButton #ApplyButton {
+                Text: %imageFrames.customUI.apply;
+                FlexWeight: 1;
+            }
+
+            Group { Anchor: (Width: 10); }
+
+            $C.@TextButton #CancelButton {
+                Text: %imageFrames.customUI.cancel;
+                FlexWeight: 1;
+            }
+        }
+    }
+}
+
+$C.@BackButton {}
