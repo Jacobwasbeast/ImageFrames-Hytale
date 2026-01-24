@@ -269,7 +269,8 @@ public class ImageFrameRuntimeManager {
     }
 
     public GroupInfo collectGroupInfo(World world, Vector3i target) throws IOException {
-        GroupInfo info = collectGroup(world, target);
+        FrameGroup existing = store.getGroupByPos(world.getName(), target);
+        GroupInfo info = existing != null ? buildGroupInfoFromStore(existing) : collectGroup(world, target);
         if (!info.valid) {
             throw new IOException("Frames must be in a flat rectangle (e.g., 2x2, 3x3)");
         }
@@ -1205,7 +1206,7 @@ public class ImageFrameRuntimeManager {
                 continue;
             }
             String blockId = world.getBlockType(pos).getId();
-            if (!isFrameBlock(blockId)) {
+            if (!BASE_BLOCK_ID.equals(blockId)) {
                 continue;
             }
             blocks.add(pos);
@@ -1235,8 +1236,31 @@ public class ImageFrameRuntimeManager {
         return info;
     }
 
-    private static boolean isFrameBlock(String blockId) {
-        return BASE_BLOCK_ID.equals(blockId) || (blockId != null && blockId.startsWith(TILE_PREFIX));
+    private GroupInfo buildGroupInfoFromStore(FrameGroup group) {
+        int sizeX = group.sizeX;
+        int sizeY = group.sizeY;
+        int sizeZ = group.sizeZ;
+        List<Vector3i> blocks = new ArrayList<>();
+        if (group.tileBlocks != null && !group.tileBlocks.isEmpty()) {
+            for (String posKey : group.tileBlocks.keySet()) {
+                Vector3i pos = parsePosKey(group.worldName, posKey);
+                if (pos != null) {
+                    blocks.add(pos);
+                }
+            }
+        } else {
+            for (int x = 0; x < sizeX; x++) {
+                for (int y = 0; y < sizeY; y++) {
+                    for (int z = 0; z < sizeZ; z++) {
+                        blocks.add(new Vector3i(group.minX + x, group.minY + y, group.minZ + z));
+                    }
+                }
+            }
+        }
+        GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ, sizeX, sizeY, sizeZ, blocks);
+        int expected = info.width * info.height;
+        info.valid = (info.sizeX == 1 || info.sizeY == 1 || info.sizeZ == 1) && blocks.size() == expected;
+        return info;
     }
 
     public static class GroupInfo {
