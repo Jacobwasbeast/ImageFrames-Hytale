@@ -58,9 +58,26 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                 commandBuilder.set("#UrlInput.Value", group.url);
             }
             if (group.fit != null) {
-                commandBuilder.set("#FitInput.Value", group.fit);
+                commandBuilder.set("#FitDropdown.Value", group.fit);
             }
             commandBuilder.set("#RotationInput.Value", String.valueOf(group.rot));
+            commandBuilder.set("#FlipXContainer #CheckBox.Value", group.flipX);
+            commandBuilder.set("#FlipYContainer #CheckBox.Value", group.flipY);
+        }
+
+        java.util.List<com.hypixel.hytale.server.core.ui.DropdownEntryInfo> fitEntries = new java.util.ArrayList<>();
+        fitEntries.add(new com.hypixel.hytale.server.core.ui.DropdownEntryInfo(
+                com.hypixel.hytale.server.core.ui.LocalizableString.fromMessageId("imageFrames.customUI.fitStretch"),
+                "stretch"));
+        fitEntries.add(new com.hypixel.hytale.server.core.ui.DropdownEntryInfo(
+                com.hypixel.hytale.server.core.ui.LocalizableString.fromMessageId("imageFrames.customUI.fitCrop"),
+                "crop"));
+        fitEntries.add(new com.hypixel.hytale.server.core.ui.DropdownEntryInfo(
+                com.hypixel.hytale.server.core.ui.LocalizableString.fromMessageId("imageFrames.customUI.fitContain"),
+                "contain"));
+        commandBuilder.set("#FitDropdown.Entries", fitEntries);
+        if (group == null || group.fit == null || group.fit.isEmpty()) {
+            commandBuilder.set("#FitDropdown.Value", "stretch");
         }
 
         addEventBindings(eventBuilder);
@@ -86,6 +103,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         String url = data.url != null ? data.url.trim() : "";
         String fit = data.fit != null && !data.fit.isEmpty() ? data.fit.trim() : "stretch";
         int rot = parseInt(data.rotation, 0);
+        boolean flipX = data.flipX;
+        boolean flipY = data.flipY;
 
         if (url.isEmpty()) {
             playerRef.sendMessage(Message.raw("URL is required."));
@@ -99,8 +118,10 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         }
 
         final String finalUrl = url;
-        final String finalFit = fit;
-        final int finalRot = rot;
+            final String finalFit = fit;
+            final int finalRot = rot;
+            final boolean finalFlipX = flipX;
+            final boolean finalFlipY = flipY;
         store.getExternalData().getWorld().execute(() -> {
             FrameGroup existing = plugin.getStore().getGroupByPos(world.getName(), blockPos);
             String resolvedOwnerUuid = existing != null ? existing.ownerUuid : null;
@@ -129,7 +150,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> {
                         try {
-                            return plugin.getRuntimeManager().buildGroupAssets(info, finalUrl, finalFit, finalRot, finalOwnerUuid, facing);
+                            return plugin.getRuntimeManager().buildGroupAssets(info, finalUrl, finalFit, finalRot, finalFlipX,
+                                    finalFlipY, finalOwnerUuid, facing);
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
@@ -162,8 +184,10 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
     private void addEventBindings(UIEventBuilder eventBuilder) {
         eventBuilder.addEventBinding(CustomUIEventBindingType.Activating, "#ApplyButton",
                 EventData.of("Action", "Apply").append("@Url", "#UrlInput.Value")
-                        .append("@Fit", "#FitInput.Value")
-                        .append("@Rotation", "#RotationInput.Value"),
+                        .append("@Fit", "#FitDropdown.Value")
+                        .append("@Rotation", "#RotationInput.Value")
+                        .append("@FlipX", "#FlipXContainer #CheckBox.Value")
+                        .append("@FlipY", "#FlipYContainer #CheckBox.Value"),
                 false);
         eventBuilder.addEventBinding(CustomUIEventBindingType.Activating, "#CancelButton",
                 EventData.of("Action", "Cancel"), false);
@@ -218,11 +242,17 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                 .add()
                 .append(new KeyedCodec<>("@Rotation", Codec.STRING), (d, v) -> d.rotation = v, d -> d.rotation)
                 .add()
+                .append(new KeyedCodec<>("@FlipX", Codec.BOOLEAN), (d, v) -> d.flipX = v, d -> d.flipX)
+                .add()
+                .append(new KeyedCodec<>("@FlipY", Codec.BOOLEAN), (d, v) -> d.flipY = v, d -> d.flipY)
+                .add()
                 .build();
 
         public String action;
         public String url;
         public String fit;
         public String rotation;
+        public boolean flipX;
+        public boolean flipY;
     }
 }

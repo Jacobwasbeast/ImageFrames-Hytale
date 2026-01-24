@@ -46,25 +46,49 @@ $C.@Container {
                 );
             }
 
-            $C.@TextField #FitInput {
-                @Anchor = (Top: 6, Left: 4, Right: 4, Height: 34);
-                PlaceholderText: %imageFrames.customUI.fitPlaceholder;
+            $C.@DropdownBox #FitDropdown {
+                @Anchor = (Top: 6, Left: 4, Right: 4, Height: $C.@DropdownBoxHeight);
+                NoItemsText: %imageFrames.customUI.fitPlaceholder;
             }
 
             Group { Anchor: (Height: 10); }
 
-            Label {
-                Text: %imageFrames.customUI.rotationLabel;
-                Style: LabelStyle(
-                    TextColor: #FFFFFF,
-                    FontSize: 16,
-                    RenderBold: true
-                );
+            Group {
+                LayoutMode: Top;
+                Anchor: (Top: 10);
+
+                Label {
+                    Text: %imageFrames.customUI.rotationLabel;
+                    Style: LabelStyle(
+                        TextColor: #FFFFFF,
+                        FontSize: 16,
+                        RenderBold: true
+                    );
+                }
+
+                $C.@TextField #RotationInput {
+                    @Anchor = (Top: 6, Left: 4, Right: 4, Height: 34);
+                    PlaceholderText: %imageFrames.customUI.rotationPlaceholder;
+                }
             }
 
-            $C.@TextField #RotationInput {
-                @Anchor = (Top: 6, Left: 4, Right: 4, Height: 34);
-                PlaceholderText: %imageFrames.customUI.rotationPlaceholder;
+            Group { Anchor: (Height: 10); }
+
+            Group {
+                LayoutMode: Left;
+                Anchor: (Top: 2, Height: 28);
+
+                $C.@CheckBoxWithLabel #FlipXContainer {
+                    @Text = %imageFrames.customUI.flipXLabel;
+                    Anchor: (Width: 160, Height: 24);
+                }
+
+                Group { Anchor: (Width: 16); }
+
+                $C.@CheckBoxWithLabel #FlipYContainer {
+                    @Text = %imageFrames.customUI.flipYLabel;
+                    Anchor: (Width: 160, Height: 24);
+                }
             }
         }
 

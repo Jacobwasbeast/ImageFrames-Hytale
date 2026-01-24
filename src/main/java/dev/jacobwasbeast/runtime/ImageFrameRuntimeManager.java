@@ -32,6 +32,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import javax.imageio.ImageIO;
@@ -54,6 +55,7 @@ public class ImageFrameRuntimeManager {
     private final Path runtimeCommonBlocksPath;
     private final Path runtimeBlockTypesPath;
     private volatile BufferedImage frameTextureCache;
+    private final ImageFrameImageCache imageCache;
 
     public ImageFrameRuntimeManager(ImageFramesPlugin plugin, ImageFrameStore store) {
         this.plugin = plugin;
@@ -62,6 +64,7 @@ public class ImageFrameRuntimeManager {
         this.runtimeAssetsPath = baseDir.resolve(RUNTIME_ASSETS_DIR).toAbsolutePath();
         this.runtimeCommonBlocksPath = runtimeAssetsPath.resolve("Common/Blocks/ImageFrames/tiles");
         this.runtimeBlockTypesPath = runtimeAssetsPath.resolve(RUNTIME_BLOCKS_DIR);
+        this.imageCache = new ImageFrameImageCache(java.nio.file.Path.of("ImageFrames"));
     }
 
     public void init() {
@@ -71,6 +74,7 @@ public class ImageFrameRuntimeManager {
             ensureRuntimePackImmutableMarker();
             registerRuntimeAssetsPack();
             loadExistingRuntimeAssets();
+            rebuildAssetsFromStore();
         } catch (Exception e) {
             plugin.getLogger().at(Level.SEVERE).withCause(e).log("Failed to initialize ImageFrames runtime assets");
         }
@@ -92,6 +96,29 @@ public class ImageFrameRuntimeManager {
     private void loadExistingRuntimeAssets() {
         ensureCommonAssetsRegistered();
         ensureBlockTypesRegistered();
+    }
+
+    private void rebuildAssetsFromStore() {
+        Map<String, FrameGroup> groups = store.getGroupsSnapshot();
+        if (groups == null || groups.isEmpty()) {
+            return;
+        }
+        List<Path> blockTypePaths = new ArrayList<>();
+        for (FrameGroup group : groups.values()) {
+            if (group == null || group.url == null || group.url.isEmpty()) {
+                continue;
+            }
+            try {
+                GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
+                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList());
+                BufferedImage source = loadSourceImage(group.url);
+                rebuildGroupAssetsFromSource(info, group, source, blockTypePaths);
+                store.putGroup(group);
+            } catch (Exception e) {
+                plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to rebuild ImageFrame assets for %s", group.groupId);
+            }
+        }
+        loadBlockTypeAssets(blockTypePaths);
     }
 
     private void ensureCommonAssetsRegistered() {
@@ -172,18 +199,20 @@ public class ImageFrameRuntimeManager {
         return info;
     }
 
-    public FrameGroup buildGroupAssets(GroupInfo info, String url, String fit, int rot, String ownerUuid, String facing)
+    public FrameGroup buildGroupAssets(GroupInfo info, String url, String fit, int rot, boolean flipX, boolean flipY,
+            String ownerUuid, String facing)
             throws IOException {
         String groupId = info.worldName + ":" + info.minX + ":" + info.minY + ":" + info.minZ + ":" + info.sizeX + "x"
                 + info.sizeY + "x" + info.sizeZ;
         String fileGroupId = buildSafeGroupId(url, info, facing, rot);
 
-        BufferedImage source = downloadImage(url);
+        BufferedImage source = loadSourceImage(url);
         int tileSize = plugin.getConfig().getTileSize();
         BufferedImage processed = scaleImage(source, info.width * tileSize, info.height * tileSize, fit);
         if (rot != 0) {
             processed = rotate(processed, rot);
         }
+        processed = applyFlips(processed, flipX, flipY);
         processed = applyFrameUnderlay(processed);
 
         List<Path> blockTypePaths = new ArrayList<>();
@@ -199,6 +228,8 @@ public class ImageFrameRuntimeManager {
         group.url = url;
         group.fit = fit;
         group.rot = rot;
+        group.flipX = flipX;
+        group.flipY = flipY;
         group.ownerUuid = ownerUuid;
         group.facing = facing;
         group.tileBlocks.clear();
@@ -233,6 +264,69 @@ public class ImageFrameRuntimeManager {
         }
         loadBlockTypeAssets(blockTypePaths);
         return group;
+    }
+
+    private void rebuildGroupAssetsFromSource(GroupInfo info, FrameGroup group, BufferedImage source, List<Path> blockTypePaths)
+            throws IOException {
+        if (source == null) {
+            throw new IOException("Missing image source");
+        }
+        String safeId = (group.safeId != null && !group.safeId.isEmpty())
+                ? group.safeId
+                : sanitizeFilename(group.groupId);
+        group.safeId = safeId;
+        String facing = group.facing != null ? group.facing : "North";
+        String fit = group.fit != null ? group.fit : "stretch";
+        int tileSize = plugin.getConfig().getTileSize();
+        BufferedImage processed = scaleImage(source, info.width * tileSize, info.height * tileSize, fit);
+        if (group.rot != 0) {
+            processed = rotate(processed, group.rot);
+        }
+        processed = applyFlips(processed, group.flipX, group.flipY);
+        processed = applyFrameUnderlay(processed);
+
+        group.tileBlocks.clear();
+        for (int ty = 0; ty < info.height; ty++) {
+            for (int tx = 0; tx < info.width; tx++) {
+                int px = tx * tileSize;
+                int py = ty * tileSize;
+                BufferedImage tile = processed.getSubimage(px, py, tileSize, tileSize);
+
+                String tileBaseName = safeId + "_" + tx + "_" + ty;
+                String tileKey = TILE_PREFIX + tileBaseName;
+                String assetPath = TILE_TEXTURE_DIR + tileBaseName + ".png";
+                Path filePath = runtimeCommonBlocksPath.resolve(tileBaseName + ".png");
+                byte[] pngBytes = encodePng(tile);
+                boolean pngChanged = writeBytesIfChanged(filePath, pngBytes);
+                boolean hasAsset = CommonAssetRegistry.hasCommonAsset(assetPath);
+                if (pngChanged || !hasAsset) {
+                    registerCommonAsset(assetPath, filePath, pngBytes);
+                }
+                Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
+                boolean jsonChanged = writeStringIfChanged(jsonPath, buildTileBlockTypeJson(assetPath, info.normalAxis, facing));
+                if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
+                    blockTypePaths.add(jsonPath);
+                }
+                Vector3i pos = info.toWorldPos(tx, ty, facing);
+                group.tileBlocks.put(ImageFrameStore.toPosKey(info.worldName, pos.getX(), pos.getY(), pos.getZ()), tileKey);
+            }
+        }
+    }
+
+    private BufferedImage loadSourceImage(String url) throws IOException {
+        try {
+            return imageCache.loadOrDownload(url, () -> {
+                try {
+                    return downloadImage(url);
+                } catch (IOException e) {
+                    return null;
+                }
+            });
+        } catch (IOException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new IOException("Failed to load image", e);
+        }
     }
 
     public void applyGroup(World world, GroupInfo info, FrameGroup group) {
@@ -534,7 +628,7 @@ public class ImageFrameRuntimeManager {
             return null;
         }
         java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile(".*_\\d+x\\d+x\\d+_([A-Za-z]+)_r\\d+_\\d+_\\d+_\\d+$")
+                .compile(".*_\\d+x\\d+x\\d+_([A-Za-z]+)_[Rr]\\d+_\\d+_\\d+_\\d+$")
                 .matcher(baseName);
         if (!matcher.matches()) {
             return null;
@@ -679,6 +773,37 @@ public class ImageFrameRuntimeManager {
         g.drawImage(src, 0, 0, null);
         g.dispose();
         return rotated;
+    }
+
+    private static BufferedImage applyFlips(BufferedImage src, boolean flipX, boolean flipY) {
+        BufferedImage out = src;
+        if (flipX) {
+            out = flipHorizontal(out);
+        }
+        if (flipY) {
+            out = flipVertical(out);
+        }
+        return out;
+    }
+
+    private static BufferedImage flipVertical(BufferedImage src) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage flipped = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = flipped.createGraphics();
+        g.drawImage(src, 0, 0, w, h, 0, h, w, 0, null);
+        g.dispose();
+        return flipped;
+    }
+
+    private static BufferedImage flipHorizontal(BufferedImage src) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage flipped = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = flipped.createGraphics();
+        g.drawImage(src, 0, 0, w, h, w, 0, 0, h, null);
+        g.dispose();
+        return flipped;
     }
 
 
