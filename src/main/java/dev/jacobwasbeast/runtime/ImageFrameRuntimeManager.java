@@ -1041,13 +1041,27 @@ public class ImageFrameRuntimeManager {
         if (frame == null) {
             return image;
         }
-        BufferedImage base = resize(frame, image.getWidth(), image.getHeight());
+        BufferedImage base = resizeNearest(frame, image.getWidth(), image.getHeight());
         BufferedImage out = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = out.createGraphics();
         g.drawImage(base, 0, 0, null);
         g.drawImage(image, 0, 0, null);
         g.dispose();
         return out;
+    }
+
+    private static BufferedImage resizeNearest(BufferedImage src, int w, int h) {
+        if (src.getWidth() == w && src.getHeight() == h) {
+            return src;
+        }
+        BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = img.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        g.drawImage(src, 0, 0, w, h, null);
+        g.dispose();
+        return img;
     }
 
     private BufferedImage getFrameTexture() {
