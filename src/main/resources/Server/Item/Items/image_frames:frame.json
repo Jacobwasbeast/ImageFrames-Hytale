@@ -10,6 +10,7 @@
   "BlockType": {
     "Material": "Solid",
     "DrawType": "Cube",
+    "Group": "Wood",
     "Textures": [
       {
         "All": "Blocks/ImageFrames/Frame.png",
@@ -22,8 +23,11 @@
     "BlockParticleSetId": "Wood",
     "Gathering": {
       "Breaking": {
-        "GatherType": "Block"
+        "GatherType": "Woods"
       }
+    },
+    "Tags": {
+      "Type": ["Wood"]
     },
     "Flags": {
       "IsUsable": true

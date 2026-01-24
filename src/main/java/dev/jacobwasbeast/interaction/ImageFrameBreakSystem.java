@@ -1,12 +1,17 @@
 package dev.jacobwasbeast.interaction;
 
+import com.hypixel.hytale.component.AddReason;
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.EntityEventSystem;
+import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.event.events.ecs.BreakBlockEvent;
+import com.hypixel.hytale.server.core.inventory.ItemStack;
+import com.hypixel.hytale.server.core.modules.entity.item.ItemComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import dev.jacobwasbeast.ImageFramesPlugin;
@@ -37,7 +42,25 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
         var world = store.getExternalData().getWorld();
         var group = plugin.getStore().getGroupByPos(world.getName(), event.getTargetBlock());
         if (group != null) {
-            plugin.getStore().removeGroup(group.groupId);
+            int count = Math.max(0, group.sizeX * group.sizeY * group.sizeZ);
+            if (count > 0) {
+                Vector3d dropPos = new Vector3d(
+                        event.getTargetBlock().getX() + 0.5,
+                        event.getTargetBlock().getY() + 0.5,
+                        event.getTargetBlock().getZ() + 0.5);
+                int remaining = count;
+                while (remaining > 0) {
+                    int qty = Math.min(remaining, 64);
+                    ItemStack stack = new ItemStack(ImageFrameRuntimeManager.BASE_BLOCK_ID, qty, null);
+                    var holder = ItemComponent.generateItemDrop(store, stack, dropPos, Vector3f.ZERO, 0.0F, 0.0F, 0.0F);
+                    if (holder != null) {
+                        commandBuffer.addEntity(holder, AddReason.SPAWN);
+                    }
+                    remaining -= qty;
+                }
+            }
+            event.setCancelled(true);
+            plugin.getRuntimeManager().removeGroupAndAssets(world, group);
         }
     }
 

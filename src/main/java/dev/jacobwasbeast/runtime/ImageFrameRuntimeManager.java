@@ -16,6 +16,7 @@ import com.hypixel.hytale.server.core.universe.world.World;
 import dev.jacobwasbeast.ImageFramesPlugin;
 import dev.jacobwasbeast.store.ImageFrameStore;
 import dev.jacobwasbeast.store.ImageFrameStore.FrameGroup;
+import it.unimi.dsi.fastutil.booleans.BooleanObjectPair;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.AffineTransform;
@@ -40,6 +41,7 @@ import javax.imageio.ImageIO;
 public class ImageFrameRuntimeManager {
     public static final String BASE_BLOCK_ID = "image_frames:frame";
     public static final String TILE_PREFIX = "ImageFrames_Tile_";
+    private static final String AIR_BLOCK_ID = "empty";
 
     private static final String RUNTIME_ASSETS_PACK = "ImageFramesRuntimeAssets";
     private static final String RUNTIME_ASSETS_DIR = "image_frames_assets";
@@ -74,6 +76,7 @@ public class ImageFrameRuntimeManager {
             ensureRuntimePackImmutableMarker();
             registerRuntimeAssetsPack();
             loadExistingRuntimeAssets();
+            cleanupRuntimeAssetsAgainstStore();
             rebuildAssetsFromStore();
         } catch (Exception e) {
             plugin.getLogger().at(Level.SEVERE).withCause(e).log("Failed to initialize ImageFrames runtime assets");
@@ -96,6 +99,80 @@ public class ImageFrameRuntimeManager {
     private void loadExistingRuntimeAssets() {
         ensureCommonAssetsRegistered();
         ensureBlockTypesRegistered();
+    }
+
+    private void cleanupRuntimeAssetsAgainstStore() {
+        Map<String, FrameGroup> groups = store.getGroupsSnapshot();
+        Set<String> expectedBaseNames = new HashSet<>();
+        if (groups != null) {
+            for (FrameGroup group : groups.values()) {
+                if (group == null) {
+                    continue;
+                }
+                String safeId = (group.safeId != null && !group.safeId.isEmpty())
+                        ? group.safeId
+                        : sanitizeFilename(group.groupId);
+                GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
+                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList());
+                for (int ty = 0; ty < info.height; ty++) {
+                    for (int tx = 0; tx < info.width; tx++) {
+                        expectedBaseNames.add(safeId + "_" + tx + "_" + ty);
+                    }
+                }
+            }
+        }
+
+        List<Path> removeJsonPaths = new ArrayList<>();
+        List<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removedCommon = new ArrayList<>();
+
+        if (Files.isDirectory(runtimeCommonBlocksPath)) {
+            try (var stream = Files.list(runtimeCommonBlocksPath)) {
+                stream.filter(p -> p.getFileName().toString().toLowerCase().endsWith(".png")).forEach(path -> {
+                    String fileName = path.getFileName().toString();
+                    String baseName = fileName.substring(0, fileName.length() - 4);
+                    if (expectedBaseNames.contains(baseName)) {
+                        return;
+                    }
+                    String assetPath = TILE_TEXTURE_DIR + fileName;
+                    BooleanObjectPair<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removed =
+                            CommonAssetRegistry.removeCommonAssetByName(RUNTIME_ASSETS_PACK, assetPath);
+                    if (removed != null && removed.second() != null) {
+                        removedCommon.add(removed.second());
+                    }
+                    try {
+                        Files.deleteIfExists(path);
+                    } catch (IOException ignored) {
+                    }
+                    Path jsonPath = runtimeBlockTypesPath.resolve(TILE_PREFIX + baseName + ".json");
+                    if (Files.exists(jsonPath)) {
+                        removeJsonPaths.add(jsonPath);
+                        try {
+                            Files.deleteIfExists(jsonPath);
+                        } catch (IOException ignored) {
+                        }
+                    }
+                });
+            } catch (IOException e) {
+                plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to cleanup runtime ImageFrames tiles");
+            }
+        }
+
+        if (!removeJsonPaths.isEmpty()) {
+            try {
+                @SuppressWarnings("unchecked")
+                var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType.getAssetStore();
+                assetStore.removeAssetWithPaths(RUNTIME_ASSETS_PACK, removeJsonPaths, TILE_UPDATE_QUERY);
+            } catch (Exception e) {
+                plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to remove orphaned ImageFrames block types");
+            }
+        }
+
+        if (!removedCommon.isEmpty()) {
+            CommonAssetModule module = CommonAssetModule.get();
+            if (module != null) {
+                module.sendRemoveAssets(removedCommon, false);
+            }
+        }
     }
 
     private void rebuildAssetsFromStore() {
@@ -334,6 +411,119 @@ public class ImageFrameRuntimeManager {
         store.putGroup(group);
     }
 
+    public void removeGroupAndAssets(World world, FrameGroup group) {
+        if (group == null) {
+            return;
+        }
+        store.removeGroup(group.groupId);
+        if (world != null && group.tileBlocks != null && !group.tileBlocks.isEmpty()) {
+            List<Vector3i> positions = new ArrayList<>();
+            for (String posKey : group.tileBlocks.keySet()) {
+                Vector3i pos = parsePosKey(group.worldName, posKey);
+                if (pos != null) {
+                    positions.add(pos);
+                }
+            }
+            scheduleBlockClear(world, positions, 256, () -> scheduleRemoveGroupAssets(group, 5));
+        } else {
+            scheduleRemoveGroupAssets(group, 5);
+        }
+    }
+
+    private void scheduleBlockClear(World world, List<Vector3i> positions, int batchSize, Runnable onComplete) {
+        if (positions == null || positions.isEmpty()) {
+            if (onComplete != null) {
+                onComplete.run();
+            }
+            return;
+        }
+        java.util.concurrent.atomic.AtomicInteger index = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.lang.Runnable task = new java.lang.Runnable() {
+            @Override
+            public void run() {
+                world.execute(() -> {
+                    int start = index.get();
+                    int end = Math.min(start + batchSize, positions.size());
+                    for (int i = start; i < end; i++) {
+                        Vector3i pos = positions.get(i);
+                        world.setBlock(pos.getX(), pos.getY(), pos.getZ(), AIR_BLOCK_ID);
+                    }
+                    if (end >= positions.size()) {
+                        if (onComplete != null) {
+                            onComplete.run();
+                        }
+                    } else {
+                        index.set(end);
+                        com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR
+                                .schedule(this, 1, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    }
+                });
+            }
+        };
+        com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR
+                .schedule(task, 1, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    private void scheduleRemoveGroupAssets(FrameGroup group, int delaySeconds) {
+        com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR.schedule(
+                () -> removeGroupAssets(group),
+                delaySeconds,
+                java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    private void removeGroupAssets(FrameGroup group) {
+        if (group == null) {
+            return;
+        }
+        String safeId = (group.safeId != null && !group.safeId.isEmpty())
+                ? group.safeId
+                : sanitizeFilename(group.groupId);
+        GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
+                group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList());
+        List<Path> jsonPaths = new ArrayList<>();
+        List<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removedCommon = new ArrayList<>();
+        for (int ty = 0; ty < info.height; ty++) {
+            for (int tx = 0; tx < info.width; tx++) {
+                String baseName = safeId + "_" + tx + "_" + ty;
+                String assetPath = TILE_TEXTURE_DIR + baseName + ".png";
+                Path pngPath = runtimeCommonBlocksPath.resolve(baseName + ".png");
+                Path jsonPath = runtimeBlockTypesPath.resolve(TILE_PREFIX + baseName + ".json");
+
+                BooleanObjectPair<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removed =
+                        CommonAssetRegistry.removeCommonAssetByName(RUNTIME_ASSETS_PACK, assetPath);
+                if (removed != null && removed.second() != null) {
+                    removedCommon.add(removed.second());
+                }
+                try {
+                    Files.deleteIfExists(pngPath);
+                } catch (IOException ignored) {
+                }
+                if (Files.exists(jsonPath)) {
+                    jsonPaths.add(jsonPath);
+                }
+                try {
+                    Files.deleteIfExists(jsonPath);
+                } catch (IOException ignored) {
+                }
+            }
+        }
+        if (!jsonPaths.isEmpty()) {
+            try {
+                @SuppressWarnings("unchecked")
+                var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType.getAssetStore();
+                assetStore.removeAssetWithPaths(RUNTIME_ASSETS_PACK, jsonPaths, TILE_UPDATE_QUERY);
+            } catch (Exception e) {
+                plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to remove ImageFrames block types");
+            }
+        }
+        if (!removedCommon.isEmpty()) {
+            CommonAssetModule module = CommonAssetModule.get();
+            if (module != null) {
+                module.sendRemoveAssets(removedCommon, false);
+            }
+        }
+    }
+
     public void placePlaceholder(World world, GroupInfo info) {
         if (world == null || info == null || info.blocks == null) {
             return;
@@ -519,6 +709,15 @@ public class ImageFrameRuntimeManager {
                 .append("      \"West\": \"").append(west).append("\"\n")
                 .append("    }\n")
                 .append("  ],\n")
+                .append("  \"Group\": \"Wood\",\n")
+                .append("  \"Gathering\": {\n")
+                .append("    \"Breaking\": {\n")
+                .append("      \"GatherType\": \"Woods\"\n")
+                .append("    }\n")
+                .append("  },\n")
+                .append("  \"Tags\": {\n")
+                .append("    \"Type\": [\"Wood\"]\n")
+                .append("  },\n")
                 .append("  \"Material\": \"Solid\",\n")
                 .append("  \"DrawType\": \"Cube\",\n")
                 .append("  \"BlockSoundSetId\": \"Wood\",\n")
@@ -773,6 +972,32 @@ public class ImageFrameRuntimeManager {
         g.drawImage(src, 0, 0, null);
         g.dispose();
         return rotated;
+    }
+
+    private Vector3i parsePosKey(String worldName, String posKey) {
+        if (posKey == null) {
+            return null;
+        }
+        String tail = posKey;
+        if (worldName != null && !worldName.isEmpty()) {
+            String prefix = worldName + ":";
+            if (posKey.startsWith(prefix)) {
+                tail = posKey.substring(prefix.length());
+            }
+        }
+        String[] parts = tail.split(":");
+        if (parts.length < 3) {
+            return null;
+        }
+        int len = parts.length;
+        try {
+            int x = Integer.parseInt(parts[len - 3]);
+            int y = Integer.parseInt(parts[len - 2]);
+            int z = Integer.parseInt(parts[len - 1]);
+            return new Vector3i(x, y, z);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static BufferedImage applyFlips(BufferedImage src, boolean flipX, boolean flipY) {
