@@ -660,6 +660,33 @@ public class ImageFrameRuntimeManager {
         plugin.getLogger().at(java.util.logging.Level.INFO).log("Broadcasted %d ImageFrames textures", assets.size());
     }
 
+    public void refreshFramesForWorld(com.hypixel.hytale.server.core.universe.world.World world) {
+        if (world == null)
+            return;
+        String worldName = world.getName();
+        for (dev.jacobwasbeast.store.ImageFrameStore.FrameGroup group : store.getGroupsSnapshot().values()) {
+            if (group == null || group.tileBlocks == null || !worldName.equals(group.worldName)) {
+                continue;
+            }
+            for (java.util.Map.Entry<String, String> entry : group.tileBlocks.entrySet()) {
+                String posKey = entry.getKey();
+                String assetKey = entry.getValue();
+
+                // key format: worldName:x:y:z
+                String[] parts = posKey.split(":");
+                if (parts.length == 4) {
+                    try {
+                        int x = Integer.parseInt(parts[1]);
+                        int y = Integer.parseInt(parts[2]);
+                        int z = Integer.parseInt(parts[3]);
+                        world.setBlock(x, y, z, assetKey);
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+            }
+        }
+    }
+
     private FileCommonAsset registerCommonAsset(String assetPath, Path filePath, byte[] bytes) {
         CommonAssetModule commonAssetModule = CommonAssetModule.get();
         if (commonAssetModule == null) {
