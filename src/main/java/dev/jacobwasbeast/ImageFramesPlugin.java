@@ -35,16 +35,6 @@ public class ImageFramesPlugin extends JavaPlugin {
         this.config = new ImageFramesConfig();
         this.store = new ImageFrameStore();
         this.runtimeManager = new ImageFrameRuntimeManager(this, store);
-
-        // Dedicated servers: Init synchronously to ensure runtime assets are registered
-        // before validation
-        if (!com.hypixel.hytale.server.core.Constants.SINGLEPLAYER) {
-            getLogger().at(Level.INFO).log("Dedicated server detected. Initializing ImageFrames synchronously...");
-            this.config.syncLoad();
-            this.store.syncLoad();
-            this.runtimeManager.init();
-            initialized.set(true);
-        }
     }
 
     @Override
@@ -76,6 +66,7 @@ public class ImageFramesPlugin extends JavaPlugin {
                                         .log("Failed to initialize ImageFrames asynchronously");
                             }
                         }).start();
+                        initialized.set(true);
                         return;
                     }
                     // Always broadcast/refresh on join to ensure client sync
