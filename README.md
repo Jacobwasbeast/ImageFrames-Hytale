@@ -23,6 +23,9 @@ ImageFrames is a Hytale mod that facilitates the display of custom images on blo
     *   **Flip**: Flip horizontally or vertically.
 4.  **Apply**: Click "Apply" to render the image.
 
+### Resetting Frames
+ To reset an ImageFrame, simply break one of the frame blocks and rebuild the structure. This will clear the current configuration.
+
 ## Screenshots
 
 <div align="center">
