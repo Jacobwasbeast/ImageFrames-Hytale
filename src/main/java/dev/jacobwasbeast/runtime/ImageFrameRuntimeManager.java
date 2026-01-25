@@ -113,7 +113,7 @@ public class ImageFrameRuntimeManager {
                         ? group.safeId
                         : sanitizeFilename(group.groupId);
                 GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
-                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList());
+                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null);
                 for (int ty = 0; ty < info.height; ty++) {
                     for (int tx = 0; tx < info.width; tx++) {
                         expectedBaseNames.add(safeId + "_" + tx + "_" + ty);
@@ -134,8 +134,8 @@ public class ImageFrameRuntimeManager {
                         return;
                     }
                     String assetPath = TILE_TEXTURE_DIR + fileName;
-                    BooleanObjectPair<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removed =
-                            CommonAssetRegistry.removeCommonAssetByName(RUNTIME_ASSETS_PACK, assetPath);
+                    BooleanObjectPair<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removed = CommonAssetRegistry
+                            .removeCommonAssetByName(RUNTIME_ASSETS_PACK, assetPath);
                     if (removed != null && removed.second() != null) {
                         removedCommon.add(removed.second());
                     }
@@ -160,10 +160,12 @@ public class ImageFrameRuntimeManager {
         if (!removeJsonPaths.isEmpty()) {
             try {
                 @SuppressWarnings("unchecked")
-                var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType.getAssetStore();
+                var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType
+                        .getAssetStore();
                 assetStore.removeAssetWithPaths(RUNTIME_ASSETS_PACK, removeJsonPaths, TILE_UPDATE_QUERY);
             } catch (Exception e) {
-                plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to remove orphaned ImageFrames block types");
+                plugin.getLogger().at(Level.WARNING).withCause(e)
+                        .log("Failed to remove orphaned ImageFrames block types");
             }
         }
 
@@ -187,12 +189,13 @@ public class ImageFrameRuntimeManager {
             }
             try {
                 GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
-                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList());
+                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null);
                 BufferedImage source = loadSourceImage(group.url);
                 rebuildGroupAssetsFromSource(info, group, source, blockTypePaths);
                 store.putGroup(group);
             } catch (Exception e) {
-                plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to rebuild ImageFrame assets for %s", group.groupId);
+                plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to rebuild ImageFrame assets for %s",
+                        group.groupId);
             }
         }
         loadBlockTypeAssets(blockTypePaths);
@@ -214,7 +217,8 @@ public class ImageFrameRuntimeManager {
                     byte[] bytes = Files.readAllBytes(path);
                     commonAssetModule.addCommonAsset(RUNTIME_ASSETS_PACK, new FileCommonAsset(path, assetPath, bytes));
                 } catch (IOException e) {
-                    plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to register tile asset %s", assetPath);
+                    plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to register tile asset %s",
+                            assetPath);
                 }
             });
         } catch (IOException e) {
@@ -257,7 +261,8 @@ public class ImageFrameRuntimeManager {
                     String facing = parseFacingFromTileName(baseName);
                     writeStringIfChanged(jsonPath, buildTileBlockTypeJson(assetPath, normalAxis, facing));
                 } catch (IOException e) {
-                    plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to write tile block type %s", tileKey);
+                    plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to write tile block type %s",
+                            tileKey);
                 }
             });
         } catch (IOException e) {
@@ -268,13 +273,18 @@ public class ImageFrameRuntimeManager {
         loadBlockTypeAssets(jsonPaths);
     }
 
-    public GroupInfo collectGroupInfo(World world, Vector3i target) throws IOException {
+    public GroupInfo collectGroupInfo(World world, Vector3i target, Axis preferredNormal) throws IOException {
         FrameGroup existing = store.getGroupByPos(world.getName(), target);
-        GroupInfo info = existing != null ? buildGroupInfoFromStore(existing) : collectGroup(world, target);
+        GroupInfo info = existing != null ? buildGroupInfoFromStore(existing)
+                : collectGroup(world, target, preferredNormal);
         if (!info.valid) {
             throw new IOException("Frames must be in a flat rectangle (e.g., 2x2, 3x3)");
         }
         return info;
+    }
+
+    public GroupInfo collectGroupInfo(World world, Vector3i target) throws IOException {
+        return collectGroupInfo(world, target, null);
     }
 
     public FrameGroup buildGroupAssets(GroupInfo info, String url, String fit, int rot, boolean flipX, boolean flipY,
@@ -329,7 +339,8 @@ public class ImageFrameRuntimeManager {
                     registerCommonAsset(assetPath, filePath, pngBytes);
                 }
                 Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
-                boolean jsonChanged = writeStringIfChanged(jsonPath, buildTileBlockTypeJson(assetPath, info.normalAxis, facing));
+                boolean jsonChanged = writeStringIfChanged(jsonPath,
+                        buildTileBlockTypeJson(assetPath, info.normalAxis, facing));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
                 }
@@ -344,7 +355,8 @@ public class ImageFrameRuntimeManager {
         return group;
     }
 
-    private void rebuildGroupAssetsFromSource(GroupInfo info, FrameGroup group, BufferedImage source, List<Path> blockTypePaths)
+    private void rebuildGroupAssetsFromSource(GroupInfo info, FrameGroup group, BufferedImage source,
+            List<Path> blockTypePaths)
             throws IOException {
         if (source == null) {
             throw new IOException("Missing image source");
@@ -381,12 +393,14 @@ public class ImageFrameRuntimeManager {
                     registerCommonAsset(assetPath, filePath, pngBytes);
                 }
                 Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
-                boolean jsonChanged = writeStringIfChanged(jsonPath, buildTileBlockTypeJson(assetPath, info.normalAxis, facing));
+                boolean jsonChanged = writeStringIfChanged(jsonPath,
+                        buildTileBlockTypeJson(assetPath, info.normalAxis, facing));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
                 }
                 Vector3i pos = info.toWorldPos(tx, ty, facing);
-                group.tileBlocks.put(ImageFrameStore.toPosKey(info.worldName, pos.getX(), pos.getY(), pos.getZ()), tileKey);
+                group.tileBlocks.put(ImageFrameStore.toPosKey(info.worldName, pos.getX(), pos.getY(), pos.getZ()),
+                        tileKey);
             }
         }
     }
@@ -480,7 +494,7 @@ public class ImageFrameRuntimeManager {
                 ? group.safeId
                 : sanitizeFilename(group.groupId);
         GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
-                group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList());
+                group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null);
         List<Path> jsonPaths = new ArrayList<>();
         List<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removedCommon = new ArrayList<>();
         for (int ty = 0; ty < info.height; ty++) {
@@ -490,8 +504,8 @@ public class ImageFrameRuntimeManager {
                 Path pngPath = runtimeCommonBlocksPath.resolve(baseName + ".png");
                 Path jsonPath = runtimeBlockTypesPath.resolve(TILE_PREFIX + baseName + ".json");
 
-                BooleanObjectPair<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removed =
-                        CommonAssetRegistry.removeCommonAssetByName(RUNTIME_ASSETS_PACK, assetPath);
+                BooleanObjectPair<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removed = CommonAssetRegistry
+                        .removeCommonAssetByName(RUNTIME_ASSETS_PACK, assetPath);
                 if (removed != null && removed.second() != null) {
                     removedCommon.add(removed.second());
                 }
@@ -511,7 +525,8 @@ public class ImageFrameRuntimeManager {
         if (!jsonPaths.isEmpty()) {
             try {
                 @SuppressWarnings("unchecked")
-                var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType.getAssetStore();
+                var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType
+                        .getAssetStore();
                 assetStore.removeAssetWithPaths(RUNTIME_ASSETS_PACK, jsonPaths, TILE_UPDATE_QUERY);
             } catch (Exception e) {
                 plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to remove ImageFrames block types");
@@ -560,7 +575,8 @@ public class ImageFrameRuntimeManager {
     }
 
     public boolean areTileBlockTypesReady(GroupInfo info, FrameGroup group) {
-        String safeId = group.safeId != null && !group.safeId.isEmpty() ? group.safeId : sanitizeFilename(group.groupId);
+        String safeId = group.safeId != null && !group.safeId.isEmpty() ? group.safeId
+                : sanitizeFilename(group.groupId);
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 String key = TILE_PREFIX + safeId + "_" + tx + "_" + ty;
@@ -595,10 +611,13 @@ public class ImageFrameRuntimeManager {
             return;
         }
         @SuppressWarnings("unchecked")
-        var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType.getAssetStore();
-        Packet packet = assetStore.getPacketGenerator().generateUpdatePacket(assetStore.getAssetMap(), loaded, TILE_UPDATE_QUERY);
+        var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType
+                .getAssetStore();
+        Packet packet = assetStore.getPacketGenerator().generateUpdatePacket(assetStore.getAssetMap(), loaded,
+                TILE_UPDATE_QUERY);
         com.hypixel.hytale.server.core.universe.Universe.get().broadcastPacketNoCache(packet);
-        plugin.getLogger().at(java.util.logging.Level.INFO).log("Broadcasted %d ImageFrames block types", loaded.size());
+        plugin.getLogger().at(java.util.logging.Level.INFO).log("Broadcasted %d ImageFrames block types",
+                loaded.size());
     }
 
     public void broadcastGroupAssets(FrameGroup group) {
@@ -617,10 +636,13 @@ public class ImageFrameRuntimeManager {
             return;
         }
         @SuppressWarnings("unchecked")
-        var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType.getAssetStore();
-        Packet packet = assetStore.getPacketGenerator().generateUpdatePacket(assetStore.getAssetMap(), loaded, TILE_UPDATE_QUERY);
+        var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType
+                .getAssetStore();
+        Packet packet = assetStore.getPacketGenerator().generateUpdatePacket(assetStore.getAssetMap(), loaded,
+                TILE_UPDATE_QUERY);
         com.hypixel.hytale.server.core.universe.Universe.get().broadcastPacketNoCache(packet);
-        plugin.getLogger().at(java.util.logging.Level.INFO).log("Broadcasted ImageFrames group block types: %d", loaded.size());
+        plugin.getLogger().at(java.util.logging.Level.INFO).log("Broadcasted ImageFrames group block types: %d",
+                loaded.size());
     }
 
     public void broadcastCommonAssets() {
@@ -629,8 +651,8 @@ public class ImageFrameRuntimeManager {
         if (commonAssetModule == null) {
             return;
         }
-        java.util.List<com.hypixel.hytale.server.core.asset.common.CommonAsset> assets =
-                CommonAssetRegistry.getCommonAssetsStartingWith(RUNTIME_ASSETS_PACK, "Blocks/ImageFrames/tiles/");
+        java.util.List<com.hypixel.hytale.server.core.asset.common.CommonAsset> assets = CommonAssetRegistry
+                .getCommonAssetsStartingWith(RUNTIME_ASSETS_PACK, "Blocks/ImageFrames/tiles/");
         if (assets == null || assets.isEmpty()) {
             return;
         }
@@ -654,7 +676,8 @@ public class ImageFrameRuntimeManager {
         }
         try {
             @SuppressWarnings("unchecked")
-            var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType.getAssetStore();
+            var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType
+                    .getAssetStore();
             assetStore.loadAssetsFromPaths(RUNTIME_ASSETS_PACK, paths, TILE_UPDATE_QUERY, true);
         } catch (Exception e) {
             plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to load ImageFrames block types");
@@ -787,6 +810,83 @@ public class ImageFrameRuntimeManager {
         };
     }
 
+    public static Axis getAxisFromHit(Vector4d hit, Vector3i target) {
+        if (hit == null || target == null) {
+            return null;
+        }
+        double rx = hit.x - (target.getX() + 0.5);
+        double ry = hit.y - (target.getY() + 0.5);
+        double rz = hit.z - (target.getZ() + 0.5);
+
+        if (Math.abs(rx) > Math.abs(ry) && Math.abs(rx) > Math.abs(rz)) {
+            return Axis.X;
+        }
+        if (Math.abs(ry) > Math.abs(rx) && Math.abs(ry) > Math.abs(rz)) {
+            return Axis.Y;
+        }
+        return Axis.Z;
+    }
+
+    public static Axis getAxisFromRaycast(Vector3d start, Vector3d dir, Vector3i target) {
+        if (start == null || dir == null || target == null) {
+            return null;
+        }
+
+        double minX = target.getX();
+        double maxX = target.getX() + 1.0;
+        double minY = target.getY();
+        double maxY = target.getY() + 1.0;
+        double minZ = target.getZ();
+        double maxZ = target.getZ() + 1.0;
+
+        // Check if inside? Assume outside.
+        // Slab method
+        double t1 = (minX - start.x) / dir.x;
+        double t2 = (maxX - start.x) / dir.x;
+        double tNearX = Math.min(t1, t2);
+        double tFarX = Math.max(t1, t2);
+
+        double tNear = tNearX;
+        double tFar = tFarX;
+
+        double t3 = (minY - start.y) / dir.y;
+        double t4 = (maxY - start.y) / dir.y;
+        double tNearY = Math.min(t3, t4);
+        double tFarY = Math.max(t3, t4);
+
+        if (tNear > tFarY || tNearY > tFar) {
+            return null; // Miss
+        }
+        tNear = Math.max(tNear, tNearY);
+        tFar = Math.min(tFar, tFarY);
+
+        double t5 = (minZ - start.z) / dir.z;
+        double t6 = (maxZ - start.z) / dir.z;
+        double tNearZ = Math.min(t5, t6);
+        double tFarZ = Math.max(t5, t6);
+
+        if (tNear > tFarZ || tNearZ > tFar) {
+            return null; // Miss
+        }
+        tNear = Math.max(tNear, tNearZ);
+
+        if (tNear < 0) {
+            return null;
+        }
+
+        // Determine face by checking which tNear contributed to the final tNear
+        // Allow a tiny epsilon for equality checks due to float precision
+        double epsilon = 1e-6;
+        if (Math.abs(tNear - tNearX) < epsilon)
+            return Axis.X;
+        if (Math.abs(tNear - tNearY) < epsilon)
+            return Axis.Y;
+        if (Math.abs(tNear - tNearZ) < epsilon)
+            return Axis.Z;
+
+        return null; // Should not happen if hit
+    }
+
     private String defaultFacingForAxis(Axis axis) {
         if (axis == Axis.X) {
             return "West";
@@ -810,7 +910,6 @@ public class ImageFrameRuntimeManager {
         try {
             int sizeX = Integer.parseInt(matcher.group(1));
             int sizeY = Integer.parseInt(matcher.group(2));
-            int sizeZ = Integer.parseInt(matcher.group(3));
             if (sizeX == 1) {
                 return Axis.X;
             }
@@ -821,6 +920,23 @@ public class ImageFrameRuntimeManager {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    public static Vector3d getForwardVector(com.hypixel.hytale.math.vector.Vector3f rotation) {
+        // Rotation is in Radians. Pitch: +PI/2 = Up, -PI/2 = Down. Yaw: 0 = -Z (North).
+        // x = -sin(yaw) * cos(pitch)
+        // y = sin(pitch)
+        // z = -cos(yaw) * cos(pitch)
+
+        double yaw = rotation.getYaw();
+        double pitch = rotation.getPitch();
+
+        double cosPitch = Math.cos(pitch);
+        double x = -Math.sin(yaw) * cosPitch;
+        double y = Math.sin(pitch);
+        double z = -Math.cos(yaw) * cosPitch;
+
+        return new Vector3d(x, y, z);
     }
 
     private String parseFacingFromTileName(String baseName) {
@@ -837,7 +953,8 @@ public class ImageFrameRuntimeManager {
     }
 
     private void placeTiles(World world, GroupInfo info, FrameGroup group) {
-        String safeId = group.safeId != null && !group.safeId.isEmpty() ? group.safeId : sanitizeFilename(group.groupId);
+        String safeId = group.safeId != null && !group.safeId.isEmpty() ? group.safeId
+                : sanitizeFilename(group.groupId);
         String facing = group.facing != null ? group.facing : "North";
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
@@ -923,7 +1040,8 @@ public class ImageFrameRuntimeManager {
         }
         BufferedImage current = src;
         if (current.getType() != BufferedImage.TYPE_INT_ARGB) {
-            current = drawScaled(current, current.getWidth(), current.getHeight(), RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            current = drawScaled(current, current.getWidth(), current.getHeight(),
+                    RenderingHints.VALUE_INTERPOLATION_BICUBIC);
         }
         int curW = current.getWidth();
         int curH = current.getHeight();
@@ -1032,7 +1150,6 @@ public class ImageFrameRuntimeManager {
         return flipped;
     }
 
-
     private BufferedImage applyFrameUnderlay(BufferedImage image) {
         if (image == null || !image.getColorModel().hasAlpha()) {
             return image;
@@ -1101,7 +1218,6 @@ public class ImageFrameRuntimeManager {
             return baos.toByteArray();
         }
     }
-
 
     private static boolean writeBytesIfChanged(Path path, byte[] bytes) throws IOException {
         if (Files.exists(path)) {
@@ -1198,7 +1314,7 @@ public class ImageFrameRuntimeManager {
         return cwd;
     }
 
-    private GroupInfo collectGroup(World world, Vector3i start) {
+    private GroupInfo collectGroup(World world, Vector3i start, Axis preferredNormal) {
         String worldName = world.getName();
         Set<String> visited = new HashSet<>();
         ArrayDeque<Vector3i> queue = new ArrayDeque<>();
@@ -1244,7 +1360,7 @@ public class ImageFrameRuntimeManager {
         int sizeZ = maxZ - minZ + 1;
 
         boolean flat = (sizeX == 1 || sizeY == 1 || sizeZ == 1);
-        GroupInfo info = new GroupInfo(worldName, minX, minY, minZ, sizeX, sizeY, sizeZ, blocks);
+        GroupInfo info = new GroupInfo(worldName, minX, minY, minZ, sizeX, sizeY, sizeZ, blocks, preferredNormal);
         int expected = info.width * info.height;
         info.valid = flat && blocks.size() == expected;
         return info;
@@ -1271,7 +1387,8 @@ public class ImageFrameRuntimeManager {
                 }
             }
         }
-        GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ, sizeX, sizeY, sizeZ, blocks);
+        GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ, sizeX, sizeY, sizeZ, blocks,
+                null);
         int expected = info.width * info.height;
         info.valid = (info.sizeX == 1 || info.sizeY == 1 || info.sizeZ == 1) && blocks.size() == expected;
         return info;
@@ -1293,7 +1410,8 @@ public class ImageFrameRuntimeManager {
         final Axis heightAxis;
         final Axis normalAxis;
 
-        GroupInfo(String worldName, int minX, int minY, int minZ, int sizeX, int sizeY, int sizeZ, List<Vector3i> blocks) {
+        GroupInfo(String worldName, int minX, int minY, int minZ, int sizeX, int sizeY, int sizeZ,
+                List<Vector3i> blocks, Axis preferredNormal) {
             this.worldName = worldName;
             this.minX = minX;
             this.minY = minY;
@@ -1304,12 +1422,33 @@ public class ImageFrameRuntimeManager {
             this.blocks = blocks;
 
             Axis normal;
-            if (sizeX == 1) {
-                normal = Axis.X;
-            } else if (sizeY == 1) {
-                normal = Axis.Y;
+            if (preferredNormal != null) {
+                // If the preferred normal is provided, we respect if the size is 1 (or allow it
+                // to override ambiguous cases like 1x1x1)
+                // If we have a 1-thick shape in that direction, we use it.
+                if ((preferredNormal == Axis.X && sizeX == 1) ||
+                        (preferredNormal == Axis.Y && sizeY == 1) ||
+                        (preferredNormal == Axis.Z && sizeZ == 1)) {
+                    normal = preferredNormal;
+                } else {
+                    // Fallback to old logic if hint is contradicting dimensions (e.g. 2x2x1
+                    // preferring Z)
+                    if (sizeX == 1) {
+                        normal = Axis.X;
+                    } else if (sizeY == 1) {
+                        normal = Axis.Y;
+                    } else {
+                        normal = Axis.Z;
+                    }
+                }
             } else {
-                normal = Axis.Z;
+                if (sizeX == 1) {
+                    normal = Axis.X;
+                } else if (sizeY == 1) {
+                    normal = Axis.Y;
+                } else {
+                    normal = Axis.Z;
+                }
             }
             this.normalAxis = normal;
 
@@ -1370,7 +1509,7 @@ public class ImageFrameRuntimeManager {
         }
     }
 
-    private enum Axis {
+    public enum Axis {
         X,
         Y,
         Z

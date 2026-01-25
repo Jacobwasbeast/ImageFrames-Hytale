@@ -13,6 +13,7 @@ import com.hypixel.hytale.server.core.entity.InteractionContext;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.pages.InteractiveCustomUIPage;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
+import com.hypixel.hytale.server.core.modules.entity.component.HeadRotation;
 import com.hypixel.hytale.server.core.modules.interaction.interaction.config.Interaction;
 import com.hypixel.hytale.server.core.ui.builder.EventData;
 import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
@@ -34,7 +35,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
     private final Vector3i blockPos;
     private final InteractionContext interactionContext;
 
-    public ImageFrameConfigPage(ImageFramesPlugin plugin, PlayerRef playerRef, Vector3i blockPos, InteractionContext interactionContext) {
+    public ImageFrameConfigPage(ImageFramesPlugin plugin, PlayerRef playerRef, Vector3i blockPos,
+            InteractionContext interactionContext) {
         super(playerRef, CustomPageLifetime.CanDismiss, FramePageData.CODEC);
         this.plugin = plugin;
         this.playerRef = playerRef;
@@ -118,10 +120,10 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         }
 
         final String finalUrl = url;
-            final String finalFit = fit;
-            final int finalRot = rot;
-            final boolean finalFlipX = flipX;
-            final boolean finalFlipY = flipY;
+        final String finalFit = fit;
+        final int finalRot = rot;
+        final boolean finalFlipX = flipX;
+        final boolean finalFlipY = flipY;
         store.getExternalData().getWorld().execute(() -> {
             FrameGroup existing = plugin.getStore().getGroupByPos(world.getName(), blockPos);
             String resolvedOwnerUuid = existing != null ? existing.ownerUuid : null;
@@ -137,7 +139,45 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
 
             dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.GroupInfo info;
             try {
-                info = plugin.getRuntimeManager().collectGroupInfo(world, blockPos);
+                Vector4d hitLocation = null;
+                Vector3i target = blockPos;
+                if (interactionContext != null) {
+                    hitLocation = interactionContext.getMetaStore().getIfPresentMetaObject(Interaction.HIT_LOCATION);
+                    if (target == null) {
+                        BlockPosition raw = interactionContext.getMetaStore()
+                                .getIfPresentMetaObject(Interaction.TARGET_BLOCK_RAW);
+                        if (raw != null) {
+                            target = new Vector3i(raw.x, raw.y, raw.z);
+                        }
+                    }
+                }
+                dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.Axis preferredAxis = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager
+                        .getAxisFromHit(hitLocation, target);
+
+                if (preferredAxis == null && target != null) {
+                    try {
+                        var playerRefEntity = playerRef.getReference();
+                        if (playerRefEntity != null && playerRefEntity.isValid()) {
+                            var transform = store.getComponent(playerRefEntity, TransformComponent.getComponentType());
+                            var headRotation = store.getComponent(playerRefEntity, HeadRotation.getComponentType());
+                            if (transform != null && headRotation != null) {
+                                Vector3d start = transform.getPosition();
+                                // Approx eye height in Hytale is 1.62
+                                Vector3d eyePos = new Vector3d(start.x, start.y + 1.62, start.z);
+
+                                // Get direction from HeadRotation
+                                Vector3d dir = headRotation.getDirection();
+
+                                preferredAxis = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager
+                                        .getAxisFromRaycast(eyePos, dir, target);
+                            }
+                        }
+                    } catch (Exception ignored) {
+                        // Fallback failed, proceed without preferredAxis
+                    }
+                }
+
+                info = plugin.getRuntimeManager().collectGroupInfo(world, blockPos, preferredAxis);
             } catch (Exception e) {
                 playerRef.sendMessage(Message.raw("Invalid frame layout: " + e.getMessage()));
                 return;
@@ -150,7 +190,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> {
                         try {
-                            return plugin.getRuntimeManager().buildGroupAssets(info, finalUrl, finalFit, finalRot, finalFlipX,
+                            return plugin.getRuntimeManager().buildGroupAssets(info, finalUrl, finalFit, finalRot,
+                                    finalFlipX,
                                     finalFlipY, finalOwnerUuid, facing);
                         } catch (Exception e) {
                             throw new RuntimeException(e);
@@ -166,7 +207,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                                     if (previousGroup != null) {
                                         plugin.getRuntimeManager().applyGroup(world, info, previousGroup);
                                     }
-                                    playerRef.sendMessage(Message.raw("ImageFrame assets are still loading. Try again in a moment."));
+                                    playerRef.sendMessage(
+                                            Message.raw("ImageFrame assets are still loading. Try again in a moment."));
                                 });
                     }))
                     .exceptionally(ex -> {
@@ -193,7 +235,6 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                 EventData.of("Action", "Cancel"), false);
     }
 
-
     private int parseInt(String text, int fallback) {
         if (text == null) {
             return fallback;
@@ -205,13 +246,15 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         }
     }
 
-    private String resolveFacing(Store<EntityStore> store, dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.GroupInfo info) {
+    private String resolveFacing(Store<EntityStore> store,
+            dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.GroupInfo info) {
         Vector4d hitLocation = null;
         Vector3i target = blockPos;
         if (interactionContext != null) {
             hitLocation = interactionContext.getMetaStore().getIfPresentMetaObject(Interaction.HIT_LOCATION);
             if (target == null) {
-                BlockPosition raw = interactionContext.getMetaStore().getIfPresentMetaObject(Interaction.TARGET_BLOCK_RAW);
+                BlockPosition raw = interactionContext.getMetaStore()
+                        .getIfPresentMetaObject(Interaction.TARGET_BLOCK_RAW);
                 if (raw != null) {
                     target = new Vector3i(raw.x, raw.y, raw.z);
                 }
