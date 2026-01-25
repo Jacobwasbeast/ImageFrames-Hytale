@@ -26,6 +26,17 @@ ImageFrames is a Hytale mod that facilitates the display of custom images on blo
 ### Resetting Frames
  To reset an ImageFrame, simply break one of the frame blocks and rebuild the structure. This will clear the current configuration.
 
+## Crafting
+
+You can craft Image Frames at a **Furniture Bench**.
+
+**Recipe:**
+*   **Category**: Furniture Misc
+*   30x **Life Essence**
+*   9x **Wood Trunk** (Any type)
+
+**Output:** 9x Image Frames
+
 ## Screenshots
 
 <div align="center">
