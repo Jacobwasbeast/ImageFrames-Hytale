@@ -65,6 +65,36 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             commandBuilder.set("#RotationInput.Value", String.valueOf(group.rot));
             commandBuilder.set("#FlipXContainer #CheckBox.Value", group.flipX);
             commandBuilder.set("#FlipYContainer #CheckBox.Value", group.flipY);
+            // Only show hideFrame checkbox for panels
+            boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId) 
+                    || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId);
+            if (isPanel) {
+                commandBuilder.set("#HideFrameContainer.Visible", true);
+                commandBuilder.set("#HideFrameContainer #CheckBox.Value", group.hideFrame);
+            } else {
+                commandBuilder.set("#HideFrameContainer.Visible", false);
+            }
+        } else {
+            // Check if current block is a panel
+            if (blockPos != null && world != null) {
+                try {
+                    var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+                    if (blockType != null) {
+                        String blockId = blockType.getId();
+                        boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId) 
+                                || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
+                        commandBuilder.set("#HideFrameContainer.Visible", isPanel);
+                        if (isPanel) {
+                            commandBuilder.set("#HideFrameContainer #CheckBox.Value", 
+                                    dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId));
+                        }
+                    }
+                } catch (Exception ignored) {
+                    commandBuilder.set("#HideFrameContainer.Visible", false);
+                }
+            } else {
+                commandBuilder.set("#HideFrameContainer.Visible", false);
+            }
         }
 
         java.util.List<com.hypixel.hytale.server.core.ui.DropdownEntryInfo> fitEntries = new java.util.ArrayList<>();
@@ -184,37 +214,59 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             }
 
             FrameGroup previousGroup = plugin.getStore().getGroupByPos(world.getName(), blockPos);
-            plugin.getRuntimeManager().placePlaceholder(world, info);
+            // Read rotation from ORIGINAL blocks BEFORE placePlaceholder replaces them
+            java.util.Map<com.hypixel.hytale.math.vector.Vector3i, Integer> originalRotations = 
+                    plugin.getRuntimeManager().readOriginalRotations(world, info);
+            plugin.getRuntimeManager().placePlaceholder(world, info, originalRotations);
 
             final String facing = resolveFacing(store, info);
+            // Determine blockId: always use PANEL_BLOCK_ID for panels (not PANEL_INVISIBLE_BLOCK_ID)
+            String blockId = info.blockId != null && !info.blockId.isEmpty() ? info.blockId : dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.BASE_BLOCK_ID;
+            // Convert PANEL_INVISIBLE_BLOCK_ID to PANEL_BLOCK_ID (invisible is now controlled by hideFrame)
+            if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+                blockId = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID;
+            }
+            // Get hideFrame from UI (for panels)
+            boolean hideFrame = false;
+            if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)) {
+                hideFrame = data.hideFrame;
+            }
+            final String finalBlockId = blockId;
+            final boolean finalHideFrame = hideFrame;
             java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> {
                         try {
                             return plugin.getRuntimeManager().buildGroupAssets(info, finalUrl, finalFit, finalRot,
                                     finalFlipX,
-                                    finalFlipY, finalOwnerUuid, facing);
+                                    finalFlipY, finalOwnerUuid, facing, finalBlockId, finalHideFrame);
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
                     })
-                    .thenAccept(group -> world.execute(() -> {
-                        plugin.getRuntimeManager().applyGroupWhenReady(world, info, group, 20,
-                                () -> {
-                                    playerRef.sendMessage(Message.raw("ImageFrame updated."));
-                                    player.getPageManager().setPage(ref, store, Page.None);
-                                },
-                                () -> {
-                                    if (previousGroup != null) {
-                                        plugin.getRuntimeManager().applyGroup(world, info, previousGroup);
-                                    }
-                                    playerRef.sendMessage(
-                                            Message.raw("ImageFrame assets are still loading. Try again in a moment."));
-                                });
-                    }))
+                    .thenAccept(group -> {
+                        // Broadcast assets (same flow as original frames)
+                        plugin.getRuntimeManager().broadcastGroupAssets(group);
+                        world.execute(() -> {
+                            // Store rotations in group for use in applyGroup
+                            group.originalRotations = originalRotations;
+                            plugin.getRuntimeManager().applyGroupWhenReady(world, info, group, 20,
+                                    () -> {
+                                        playerRef.sendMessage(Message.raw("ImageFrame updated."));
+                                        player.getPageManager().setPage(ref, store, Page.None);
+                                    },
+                                    () -> {
+                                        if (previousGroup != null) {
+                                            plugin.getRuntimeManager().applyGroup(world, info, previousGroup, previousGroup.originalRotations != null ? previousGroup.originalRotations : new java.util.HashMap<>());
+                                        }
+                                        playerRef.sendMessage(
+                                                Message.raw("ImageFrame assets are still loading. Try again in a moment."));
+                                    });
+                        });
+                    })
                     .exceptionally(ex -> {
                         world.execute(() -> {
                             if (previousGroup != null) {
-                                plugin.getRuntimeManager().applyGroup(world, info, previousGroup);
+                                plugin.getRuntimeManager().applyGroup(world, info, previousGroup, previousGroup.originalRotations != null ? previousGroup.originalRotations : new java.util.HashMap<>());
                             }
                             playerRef.sendMessage(Message.raw("Failed to apply image: " + ex.getMessage()));
                         });
@@ -289,6 +341,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                 .add()
                 .append(new KeyedCodec<>("@FlipY", Codec.BOOLEAN), (d, v) -> d.flipY = v, d -> d.flipY)
                 .add()
+                .append(new KeyedCodec<>("@HideFrame", Codec.BOOLEAN), (d, v) -> d.hideFrame = v, d -> d.hideFrame)
+                .add()
                 .build();
 
         public String action;
@@ -297,5 +351,6 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         public String rotation;
         public boolean flipX;
         public boolean flipY;
+        public boolean hideFrame;
     }
 }

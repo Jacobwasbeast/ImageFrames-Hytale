@@ -89,6 +89,13 @@ $C.@Container {
                     @Text = %imageFrames.customUI.flipYLabel;
                     Anchor: (Width: 160, Height: 24);
                 }
+
+                Group { Anchor: (Width: 16); }
+
+                $C.@CheckBoxWithLabel #HideFrameContainer {
+                    @Text = %imageFrames.customUI.hideFrameLabel;
+                    Anchor: (Width: 160, Height: 24);
+                }
             }
         }
 

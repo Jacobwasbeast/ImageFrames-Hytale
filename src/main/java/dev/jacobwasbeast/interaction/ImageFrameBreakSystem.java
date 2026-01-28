@@ -44,6 +44,18 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
         if (group != null) {
             int count = Math.max(0, group.sizeX * group.sizeY * group.sizeZ);
             if (count > 0) {
+                // Determine which item to drop based on the group's blockId
+                // Note: PANEL_INVISIBLE_BLOCK_ID drops as PANEL_BLOCK_ID since invisible is now a UI option
+                String dropItemId = ImageFrameRuntimeManager.BASE_BLOCK_ID;
+                if (group.blockId != null) {
+                    if (ImageFrameRuntimeManager.SLIM_BLOCK_ID.equals(group.blockId)) {
+                        dropItemId = ImageFrameRuntimeManager.SLIM_BLOCK_ID;
+                    } else if (ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId) 
+                            || ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
+                        dropItemId = ImageFrameRuntimeManager.PANEL_BLOCK_ID;
+                    }
+                }
+                
                 Vector3d dropPos = new Vector3d(
                         event.getTargetBlock().getX() + 0.5,
                         event.getTargetBlock().getY() + 0.5,
@@ -51,7 +63,7 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
                 int remaining = count;
                 while (remaining > 0) {
                     int qty = Math.min(remaining, 64);
-                    ItemStack stack = new ItemStack(ImageFrameRuntimeManager.BASE_BLOCK_ID, qty, null);
+                    ItemStack stack = new ItemStack(dropItemId, qty, null);
                     var holder = ItemComponent.generateItemDrop(store, stack, dropPos, Vector3f.ZERO, 0.0F, 0.0F, 0.0F);
                     if (holder != null) {
                         commandBuffer.addEntity(holder, AddReason.SPAWN);
@@ -72,6 +84,9 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
 
     private boolean isFrameBlock(String blockId) {
         return ImageFrameRuntimeManager.BASE_BLOCK_ID.equals(blockId)
+                || ImageFrameRuntimeManager.SLIM_BLOCK_ID.equals(blockId)
+                || ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)
+                || ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId)
                 || (blockId != null && blockId.startsWith(ImageFrameRuntimeManager.TILE_PREFIX));
     }
 }

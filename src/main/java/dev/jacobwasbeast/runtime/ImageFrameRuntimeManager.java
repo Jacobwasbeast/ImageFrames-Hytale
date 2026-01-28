@@ -30,6 +30,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayDeque;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -40,6 +42,9 @@ import javax.imageio.ImageIO;
 
 public class ImageFrameRuntimeManager {
     public static final String BASE_BLOCK_ID = "image_frames:frame";
+    public static final String SLIM_BLOCK_ID = "image_frames:slim_frame";
+    public static final String PANEL_BLOCK_ID = "image_frames:panel";
+    public static final String PANEL_INVISIBLE_BLOCK_ID = "image_frames:panel_invisible";
     public static final String TILE_PREFIX = "ImageFrames_Tile_";
     private static final String AIR_BLOCK_ID = "empty";
 
@@ -47,7 +52,10 @@ public class ImageFrameRuntimeManager {
     private static final String RUNTIME_ASSETS_DIR = "image_frames_assets";
     private static final String RUNTIME_BLOCKS_DIR = "Server/Item/Block/Blocks/ImageFramesData";
     private static final String FRAME_TEXTURE_PATH = "Blocks/ImageFrames/Frame.png";
+    private static final String PANEL_TEXTURE_PATH = "Blocks/ImageFrames/Panel.png";
     private static final String TILE_TEXTURE_DIR = "Blocks/ImageFrames/tiles/";
+    private static final String PANEL_MODEL_DIR = "Blocks/ImageFrames/PanelModels/";
+    private static final String PANEL_MODEL_PATH = "Blocks/ImageFrames/Panel.blockymodel";
     private static final AssetUpdateQuery TILE_UPDATE_QUERY = new AssetUpdateQuery(
             new AssetUpdateQuery.RebuildCache(true, false, false, false, false, false));
 
@@ -57,6 +65,7 @@ public class ImageFrameRuntimeManager {
     private final Path runtimeCommonBlocksPath;
     private final Path runtimeBlockTypesPath;
     private volatile BufferedImage frameTextureCache;
+    private volatile BufferedImage panelTextureCache;
     private final ImageFrameImageCache imageCache;
 
     public ImageFrameRuntimeManager(ImageFramesPlugin plugin, ImageFrameStore store) {
@@ -113,7 +122,7 @@ public class ImageFrameRuntimeManager {
                         ? group.safeId
                         : sanitizeFilename(group.groupId);
                 GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
-                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null);
+                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null, group.blockId);
                 for (int ty = 0; ty < info.height; ty++) {
                     for (int tx = 0; tx < info.width; tx++) {
                         expectedBaseNames.add(safeId + "_" + tx + "_" + ty);
@@ -189,7 +198,7 @@ public class ImageFrameRuntimeManager {
             }
             try {
                 GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
-                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null);
+                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null, group.blockId);
                 BufferedImage source = loadSourceImage(group.url);
                 rebuildGroupAssetsFromSource(info, group, source, blockTypePaths);
                 store.putGroup(group);
@@ -259,7 +268,11 @@ public class ImageFrameRuntimeManager {
                 try {
                     Axis normalAxis = parseNormalAxisFromTileName(baseName);
                     String facing = parseFacingFromTileName(baseName);
-                    writeStringIfChanged(jsonPath, buildTileBlockTypeJson(assetPath, normalAxis, facing));
+                    // Use BASE_BLOCK_ID for existing tiles (not slim frames or panels)
+                    // Default tileSize for existing tiles (will be overridden for panels)
+                    int defaultTileSize = 32;
+                    writeStringIfChanged(jsonPath,
+                            buildTileBlockTypeJson(assetPath, normalAxis, facing, BASE_BLOCK_ID, false, null, defaultTileSize));
                 } catch (IOException e) {
                     plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to write tile block type %s",
                             tileKey);
@@ -288,7 +301,7 @@ public class ImageFrameRuntimeManager {
     }
 
     public FrameGroup buildGroupAssets(GroupInfo info, String url, String fit, int rot, boolean flipX, boolean flipY,
-            String ownerUuid, String facing)
+            String ownerUuid, String facing, String blockId, boolean hideFrame)
             throws IOException {
         String groupId = info.worldName + ":" + info.minX + ":" + info.minY + ":" + info.minZ + ":" + info.sizeX + "x"
                 + info.sizeY + "x" + info.sizeZ;
@@ -301,7 +314,14 @@ public class ImageFrameRuntimeManager {
             processed = rotate(processed, rot);
         }
         processed = applyFlips(processed, flipX, flipY);
-        processed = applyFrameUnderlay(processed);
+        // For slim frames, don't apply frame underlay - the model handles it separately with multi-texture
+        // For panels, build a texture atlas (frame on left, image on right)
+        if (!SLIM_BLOCK_ID.equals(blockId)) {
+            if (!PANEL_BLOCK_ID.equals(blockId) && !PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+                // Regular frames: apply frame underlay based on hideFrame
+                processed = applyFrameUnderlay(processed, hideFrame);
+            }
+        }
 
         List<Path> blockTypePaths = new ArrayList<>();
         FrameGroup group = new FrameGroup(groupId);
@@ -320,13 +340,24 @@ public class ImageFrameRuntimeManager {
         group.flipY = flipY;
         group.ownerUuid = ownerUuid;
         group.facing = facing;
+        group.blockId = blockId;
+        group.hideFrame = hideFrame;
         group.tileBlocks.clear();
+        String panelModelPath = null;
+        if (PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
+            panelModelPath = ensurePanelModel(tileSize);
+        }
 
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 int px = tx * tileSize;
                 int py = ty * tileSize;
                 BufferedImage tile = processed.getSubimage(px, py, tileSize, tileSize);
+                // For panels, build texture atlas (frame on left, image on right)
+                if (PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+                    boolean includeFrame = !PANEL_INVISIBLE_BLOCK_ID.equals(blockId) && !hideFrame;
+                    tile = buildPanelAtlas(tile, includeFrame);
+                }
 
                 String tileBaseName = fileGroupId + "_" + tx + "_" + ty;
                 String tileKey = TILE_PREFIX + tileBaseName;
@@ -340,7 +371,8 @@ public class ImageFrameRuntimeManager {
                 }
                 Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
                 boolean jsonChanged = writeStringIfChanged(jsonPath,
-                        buildTileBlockTypeJson(assetPath, info.normalAxis, facing));
+                        buildTileBlockTypeJson(assetPath, info.normalAxis, facing, group.blockId, group.hideFrame,
+                                panelModelPath, tileSize));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
                 }
@@ -373,14 +405,30 @@ public class ImageFrameRuntimeManager {
             processed = rotate(processed, group.rot);
         }
         processed = applyFlips(processed, group.flipX, group.flipY);
-        processed = applyFrameUnderlay(processed);
+        // For slim frames, don't apply frame underlay - the model handles it separately with multi-texture
+        // For panels, build a texture atlas (frame on left, image on right)
+        if (!SLIM_BLOCK_ID.equals(group.blockId)) {
+            if (!PANEL_BLOCK_ID.equals(group.blockId) && !PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
+                // Regular frames: apply frame underlay based on hideFrame
+                processed = applyFrameUnderlay(processed, group.hideFrame);
+            }
+        }
 
         group.tileBlocks.clear();
+        String panelModelPath = null;
+        if (PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
+            panelModelPath = ensurePanelModel(tileSize);
+        }
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 int px = tx * tileSize;
                 int py = ty * tileSize;
                 BufferedImage tile = processed.getSubimage(px, py, tileSize, tileSize);
+                // For panels, build texture atlas (frame on left, image on right)
+                if (PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
+                    boolean includeFrame = !PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId) && !group.hideFrame;
+                    tile = buildPanelAtlas(tile, includeFrame);
+                }
 
                 String tileBaseName = safeId + "_" + tx + "_" + ty;
                 String tileKey = TILE_PREFIX + tileBaseName;
@@ -394,7 +442,8 @@ public class ImageFrameRuntimeManager {
                 }
                 Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
                 boolean jsonChanged = writeStringIfChanged(jsonPath,
-                        buildTileBlockTypeJson(assetPath, info.normalAxis, facing));
+                        buildTileBlockTypeJson(assetPath, info.normalAxis, facing, group.blockId, group.hideFrame,
+                                panelModelPath, tileSize));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
                 }
@@ -421,8 +470,8 @@ public class ImageFrameRuntimeManager {
         }
     }
 
-    public void applyGroup(World world, GroupInfo info, FrameGroup group) {
-        placeTiles(world, info, group);
+    public void applyGroup(World world, GroupInfo info, FrameGroup group, Map<Vector3i, Integer> rotations) {
+        placeTiles(world, info, group, rotations);
         store.putGroup(group);
     }
 
@@ -494,7 +543,7 @@ public class ImageFrameRuntimeManager {
                 ? group.safeId
                 : sanitizeFilename(group.groupId);
         GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
-                group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null);
+                group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null, group.blockId);
         List<Path> jsonPaths = new ArrayList<>();
         List<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removedCommon = new ArrayList<>();
         for (int ty = 0; ty < info.height; ty++) {
@@ -540,12 +589,153 @@ public class ImageFrameRuntimeManager {
         }
     }
 
-    public void placePlaceholder(World world, GroupInfo info) {
+    private int readRotation(World world, Vector3i pos) {
+        try {
+            long chunkIndex = com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(pos.getX(), pos.getZ());
+            var chunk = world.getChunk(chunkIndex);
+            if (chunk != null) {
+                // Try all methods on chunk
+                java.lang.reflect.Method[] methods = chunk.getClass().getMethods();
+                for (java.lang.reflect.Method method : methods) {
+                    if (method.getName().toLowerCase().contains("rotation") || method.getName().toLowerCase().contains("variant")) {
+                        try {
+                            if (method.getParameterCount() == 3) {
+                                Object result = method.invoke(chunk, pos.getX(), pos.getY(), pos.getZ());
+                                if (result instanceof Integer) {
+                                    int rotation = (Integer) result;
+                                    plugin.getLogger().at(Level.INFO).log("Read rotation %d using method %s at %d,%d,%d", rotation, method.getName(), pos.getX(), pos.getY(), pos.getZ());
+                                    return rotation;
+                                }
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+                }
+                
+                // Try getBlockData and inspect all fields/methods
+                try {
+                    java.lang.reflect.Method getBlockData = chunk.getClass().getMethod("getBlockData", int.class, int.class, int.class);
+                    Object blockData = getBlockData.invoke(chunk, pos.getX(), pos.getY(), pos.getZ());
+                    if (blockData != null) {
+                        // Try all fields
+                        java.lang.reflect.Field[] fields = blockData.getClass().getFields();
+                        for (java.lang.reflect.Field field : fields) {
+                            String fieldName = field.getName().toLowerCase();
+                            if (fieldName.contains("rotation") || fieldName.contains("variant")) {
+                                try {
+                                    Object value = field.get(blockData);
+                                    if (value instanceof Integer) {
+                                        int rotation = (Integer) value;
+                                        plugin.getLogger().at(Level.INFO).log("Read rotation %d from field %s at %d,%d,%d", rotation, field.getName(), pos.getX(), pos.getY(), pos.getZ());
+                                        return rotation;
+                                    }
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        }
+                        
+                        // Try all methods on blockData
+                        java.lang.reflect.Method[] blockDataMethods = blockData.getClass().getMethods();
+                        for (java.lang.reflect.Method method : blockDataMethods) {
+                            String methodName = method.getName().toLowerCase();
+                            if ((methodName.contains("rotation") || methodName.contains("variant")) && method.getParameterCount() == 0) {
+                                try {
+                                    Object result = method.invoke(blockData);
+                                    if (result instanceof Integer) {
+                                        int rotation = (Integer) result;
+                                        plugin.getLogger().at(Level.INFO).log("Read rotation %d using blockData method %s at %d,%d,%d", rotation, method.getName(), pos.getX(), pos.getY(), pos.getZ());
+                                        return rotation;
+                                    }
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    plugin.getLogger().at(Level.FINE).log("getBlockData failed: %s", e.getMessage());
+                }
+                
+                // Try getBlockType and inspect it
+                try {
+                    java.lang.reflect.Method getBlockType = chunk.getClass().getMethod("getBlockType", int.class, int.class, int.class);
+                    Object blockType = getBlockType.invoke(chunk, pos.getX(), pos.getY(), pos.getZ());
+                    if (blockType != null) {
+                        java.lang.reflect.Method[] blockTypeMethods = blockType.getClass().getMethods();
+                        for (java.lang.reflect.Method method : blockTypeMethods) {
+                            String methodName = method.getName().toLowerCase();
+                            if ((methodName.contains("rotation") || methodName.contains("variant")) && method.getParameterCount() == 0) {
+                                try {
+                                    Object result = method.invoke(blockType);
+                                    if (result instanceof Integer) {
+                                        int rotation = (Integer) result;
+                                        plugin.getLogger().at(Level.INFO).log("Read rotation %d using blockType method %s at %d,%d,%d", rotation, method.getName(), pos.getX(), pos.getY(), pos.getZ());
+                                        return rotation;
+                                    }
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception e) {
+            plugin.getLogger().at(Level.WARNING).withCause(e).log("Exception reading rotation at %d,%d,%d", pos.getX(), pos.getY(), pos.getZ());
+        }
+        plugin.getLogger().at(Level.WARNING).log("Failed to read rotation at %d,%d,%d", pos.getX(), pos.getY(), pos.getZ());
+        return -1; // -1 means couldn't read rotation
+    }
+    
+    public Map<Vector3i, Integer> readOriginalRotations(World world, GroupInfo info) {
+        Map<Vector3i, Integer> rotations = new HashMap<>();
+        String blockId = (info.blockId != null && !info.blockId.isEmpty()) ? info.blockId : BASE_BLOCK_ID;
+        boolean isPanel = PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
+        if (!isPanel) {
+            return rotations;
+        }
+        
+        // Read rotation from ORIGINAL blocks BEFORE they get replaced
+        plugin.getLogger().at(Level.INFO).log("Reading rotations from %d original panel blocks", info.blocks.size());
+        for (Vector3i pos : info.blocks) {
+            int rotation = readRotation(world, pos);
+            if (rotation >= 0) {
+                rotations.put(pos, rotation);
+                plugin.getLogger().at(Level.INFO).log("Stored rotation %d for position %d,%d,%d", rotation, pos.getX(), pos.getY(), pos.getZ());
+            } else {
+                plugin.getLogger().at(Level.WARNING).log("Could not read rotation for position %d,%d,%d", pos.getX(), pos.getY(), pos.getZ());
+            }
+        }
+        plugin.getLogger().at(Level.INFO).log("Read %d rotations out of %d blocks", rotations.size(), info.blocks.size());
+        return rotations;
+    }
+    
+    public void placePlaceholder(World world, GroupInfo info, Map<Vector3i, Integer> rotations) {
         if (world == null || info == null || info.blocks == null) {
             return;
         }
+        String blockId = (info.blockId != null && !info.blockId.isEmpty()) ? info.blockId : BASE_BLOCK_ID;
+        boolean isPanel = PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
+        
         for (Vector3i pos : info.blocks) {
-            world.setBlock(pos.getX(), pos.getY(), pos.getZ(), BASE_BLOCK_ID);
+            if (isPanel && rotations != null && rotations.containsKey(pos)) {
+                // Use stored rotation from original block
+                int rotation = rotations.get(pos);
+                try {
+                    long chunkIndex = com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(pos.getX(), pos.getZ());
+                    var chunk = world.getChunk(chunkIndex);
+                    if (chunk != null) {
+                        int newBlockId = BlockType.getAssetMap().getIndex(blockId);
+                        BlockType blockType = BlockType.getAssetMap().getAsset(newBlockId);
+                        if (blockType != null) {
+                            chunk.setBlock(pos.getX(), pos.getY(), pos.getZ(), newBlockId, blockType, rotation, 0, 0);
+                            continue;
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            // Fallback to world.setBlock
+            world.setBlock(pos.getX(), pos.getY(), pos.getZ(), blockId);
         }
     }
 
@@ -556,7 +746,9 @@ public class ImageFrameRuntimeManager {
                     if (areTileBlockTypesReady(info, group)) {
                         com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR
                                 .schedule(() -> world.execute(() -> {
-                                    placeTiles(world, info, group);
+                                    // Use stored rotations from group (read before placePlaceholder)
+                                    Map<Vector3i, Integer> rotations = group.originalRotations != null ? group.originalRotations : new HashMap<>();
+                                    placeTiles(world, info, group, rotations);
                                     store.putGroup(group);
                                 }), 1000, java.util.concurrent.TimeUnit.MILLISECONDS);
                         if (onSuccess != null) {
@@ -724,7 +916,113 @@ public class ImageFrameRuntimeManager {
         }
     }
 
-    private String buildTileBlockTypeJson(String texturePath, Axis normalAxis, String facing) {
+    private String buildTileBlockTypeJson(String texturePath, Axis normalAxis, String facing, String blockId,
+            boolean hideFrame, String panelModelPath, int tileSize) {
+        if (PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+            // For panels, use a single atlas texture with UV offsets (frame on left, image on right)
+            // Always use the panel model
+            String model = panelModelPath != null ? panelModelPath : PANEL_MODEL_PATH;
+            
+            // Calculate scale factor: model is tileSize x tileSize, but should render at 32x32 world units
+            // Scale = 32 / tileSize (e.g., 32/512 = 0.0625 for 512px tiles)
+            double scaleFactor = 32.0 / tileSize;
+
+            // Match static panel JSON exactly, minus Flags/Interactions, plus CustomModelTexture
+            StringBuilder json = new StringBuilder();
+            json.append("{\n")
+                    .append("  \"Material\": \"Solid\",\n")
+                    .append("  \"DrawType\": \"Model\",\n")
+                    .append("  \"Opacity\": \"Transparent\",\n")
+                    .append("  \"CustomModel\": \"").append(model).append("\",\n")
+                    .append("  \"CustomModelScale\": ").append(scaleFactor).append(",\n")
+                    .append("  \"CustomModelTexture\": [\n")
+                    .append("    {\n")
+                    .append("      \"Texture\": \"").append(texturePath).append("\"\n")
+                    .append("    }\n")
+                    .append("  ],\n")
+                    .append("  \"HitboxType\": \"Painting\",\n")
+                    .append("  \"VariantRotation\": \"NESW\",\n")
+                    .append("  \"Gathering\": {\n")
+                    .append("    \"Soft\": {\n")
+                    .append("      \"IsWeaponBreakable\": false\n")
+                    .append("    }\n")
+                    .append("  },\n")
+                    .append("  \"BlockParticleSetId\": \"Wood\",\n")
+                    .append("  \"BlockSoundSetId\": \"Wood\",\n")
+                    .append("  \"Support\": {\n")
+                    .append("    \"North\": [\n")
+                    .append("      {\n")
+                    .append("        \"FaceType\": \"Full\"\n")
+                    .append("      }\n")
+                    .append("    ],\n")
+                    .append("    \"South\": [\n")
+                    .append("      {\n")
+                    .append("        \"FaceType\": \"Full\"\n")
+                    .append("      }\n")
+                    .append("    ],\n")
+                    .append("    \"East\": [\n")
+                    .append("      {\n")
+                    .append("        \"FaceType\": \"Full\"\n")
+                    .append("      }\n")
+                    .append("    ],\n")
+                    .append("    \"West\": [\n")
+                    .append("      {\n")
+                    .append("        \"FaceType\": \"Full\"\n")
+                    .append("      }\n")
+                    .append("    ],\n")
+                    .append("    \"Up\": [\n")
+                    .append("      {\n")
+                    .append("        \"FaceType\": \"Full\"\n")
+                    .append("      }\n")
+                    .append("    ],\n")
+                    .append("    \"Down\": [\n")
+                    .append("      {\n")
+                    .append("        \"FaceType\": \"Full\"\n")
+                    .append("      }\n")
+                    .append("    ]\n")
+                    .append("  },\n")
+                    .append("  \"ParticleColor\": \"#684127\"\n")
+                    .append("}\n");
+            return json.toString();
+        }
+        if (SLIM_BLOCK_ID.equals(blockId)) {
+            // For slim frames, use custom model
+            // Use single image texture that wraps the model
+            String model = "Blocks/ImageFrames/Slim_Frame.blockymodel";
+
+            StringBuilder json = new StringBuilder();
+            json.append("{\n")
+                    .append("  \"CustomModel\": \"").append(model).append("\",\n")
+                    .append("  \"CustomModelTexture\": [\n")
+                    .append("    {\n")
+                    .append("      \"Texture\": \"").append(texturePath).append("\"\n")
+                    .append("    }\n")
+                    .append("  ],\n")
+                    .append("  \"Group\": \"Wood\",\n")
+                    .append("  \"Gathering\": {\n")
+                    .append("    \"Breaking\": {\n")
+                    .append("      \"Drops\": [\n")
+                    .append("        {\n")
+                    .append("          \"Item\": \"").append(SLIM_BLOCK_ID).append("\"\n")
+                    .append("        }\n")
+                    .append("      ]\n")
+                    .append("    }\n")
+                    .append("  },\n")
+                    .append("  \"Tags\": {\n")
+                    .append("    \"Type\": [\"Wood\"]\n")
+                    .append("  },\n")
+                    .append("  \"Material\": \"Solid\",\n")
+                    .append("  \"DrawType\": \"Model\",\n")
+                    .append("  \"Opacity\": \"Transparent\",\n")
+                    .append("  \"HitboxType\": \"Painting\",\n")
+                    .append("  \"VariantRotation\": \"NESW\",\n")
+                    .append("  \"CubeShadingMode\": \"Standard\",\n")
+                    .append("  \"BlockSoundSetId\": \"Wood\",\n")
+                    .append("  \"BlockParticleSetId\": \"Wood\",\n")
+                    .append("  \"ParticleColor\": \"#888888\"\n")
+                    .append("}\n");
+            return json.toString();
+        }
         String faceTexture = texturePath;
         String up = FRAME_TEXTURE_PATH;
         String down = FRAME_TEXTURE_PATH;
@@ -979,14 +1277,40 @@ public class ImageFrameRuntimeManager {
         return matcher.group(1);
     }
 
-    private void placeTiles(World world, GroupInfo info, FrameGroup group) {
+    private void placeTiles(World world, GroupInfo info, FrameGroup group, Map<Vector3i, Integer> rotations) {
         String safeId = group.safeId != null && !group.safeId.isEmpty() ? group.safeId
                 : sanitizeFilename(group.groupId);
         String facing = group.facing != null ? group.facing : "North";
+        boolean isPanel = PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId);
+        
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 Vector3i pos = info.toWorldPos(tx, ty, facing);
                 String key = TILE_PREFIX + safeId + "_" + tx + "_" + ty;
+                
+                if (isPanel && rotations != null && rotations.containsKey(pos)) {
+                    // Use stored rotation from ORIGINAL block (read before placePlaceholder)
+                    int rotation = rotations.get(pos);
+                    plugin.getLogger().at(Level.INFO).log("Placing tile at %d,%d,%d with stored rotation %d", pos.getX(), pos.getY(), pos.getZ(), rotation);
+                    try {
+                        long chunkIndex = com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(pos.getX(), pos.getZ());
+                        var chunk = world.getChunk(chunkIndex);
+                        if (chunk != null) {
+                            int blockId = BlockType.getAssetMap().getIndex(key);
+                            BlockType blockType = BlockType.getAssetMap().getAsset(blockId);
+                            if (blockType != null) {
+                                chunk.setBlock(pos.getX(), pos.getY(), pos.getZ(), blockId, blockType, rotation, 0, 0);
+                                plugin.getLogger().at(Level.INFO).log("Successfully placed tile with rotation %d", rotation);
+                                continue;
+                            }
+                        }
+                    } catch (Exception e) {
+                        plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to place tile with rotation at %d,%d,%d", pos.getX(), pos.getY(), pos.getZ());
+                    }
+                } else if (isPanel) {
+                    plugin.getLogger().at(Level.WARNING).log("No stored rotation for panel at %d,%d,%d, using world.setBlock", pos.getX(), pos.getY(), pos.getZ());
+                }
+                // Fallback to world.setBlock
                 world.setBlock(pos.getX(), pos.getY(), pos.getZ(), key);
             }
         }
@@ -1177,7 +1501,10 @@ public class ImageFrameRuntimeManager {
         return flipped;
     }
 
-    private BufferedImage applyFrameUnderlay(BufferedImage image) {
+    private BufferedImage applyFrameUnderlay(BufferedImage image, boolean hideFrame) {
+        if (hideFrame) {
+            return image;
+        }
         if (image == null || !image.getColorModel().hasAlpha()) {
             return image;
         }
@@ -1192,6 +1519,178 @@ public class ImageFrameRuntimeManager {
         g.drawImage(image, 0, 0, null);
         g.dispose();
         return out;
+    }
+
+    private BufferedImage buildPanelAtlas(BufferedImage image, boolean includeFrame) {
+        if (image == null) {
+            return null;
+        }
+        int imageW = image.getWidth();
+        int imageH = image.getHeight();
+        
+        // Panel.png is 64x64 and contains frame parts + side parts
+        // Scale Panel.png to 2x the image size (so if image is 32x32, Panel becomes 64x64)
+        int panelScaledW = imageW * 2;
+        int panelScaledH = imageH * 2;
+        
+        // Start with Panel.png, resize it to be double the size of the image
+        // Then place the image under it
+        // Atlas size: width = panelScaledW (2x image width), height = panelScaledH (2x image height)
+        // Image is placed under the front-face area (y = imageH), not under the full scaled panel height.
+        BufferedImage atlas = new BufferedImage(panelScaledW, panelScaledH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = atlas.createGraphics();
+        
+        if (includeFrame) {
+            BufferedImage panel = getPanelTexture();
+            if (panel != null) {
+                // Scale Panel.png to 2x image size using nearest neighbor (preserves pixel art quality)
+                BufferedImage scaledPanel = resizeNearest(panel, panelScaledW, panelScaledH);
+                // Draw scaled Panel.png at the top (don't move it, just resize it)
+                g.drawImage(scaledPanel, 0, 0, null);
+            }
+        }
+        
+        // Place the image under the front-face area (y = imageH)
+        g.drawImage(image, 0, imageH, null);
+        g.dispose();
+        return atlas;
+    }
+
+    private String ensurePanelModel(int tileSize) {
+        String modelAssetPath = PANEL_MODEL_DIR + "Panel_" + tileSize + ".blockymodel";
+        Path filePath = runtimeAssetsPath.resolve("Common").resolve(modelAssetPath);
+        try {
+            String json = buildPanelModelJson(tileSize);
+            byte[] bytes = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            boolean changed = writeBytesIfChanged(filePath, bytes);
+            if (changed || !CommonAssetRegistry.hasCommonAsset(modelAssetPath)) {
+                registerCommonAsset(modelAssetPath, filePath, bytes);
+            }
+            return modelAssetPath;
+        } catch (IOException e) {
+            plugin.getLogger().at(Level.WARNING).withCause(e)
+                    .log("Failed to write panel model for tileSize=%d", tileSize);
+            return PANEL_MODEL_PATH;
+        }
+    }
+
+    private String buildPanelModelJson(int tileSize) {
+        // Model size must match tileSize to use the full texture resolution
+        // Frame node: uses Panel.png portion (top half of atlas, y: 0 to tileSize-1)
+        // Image node: uses image portion (bottom half of atlas, y: tileSize to 2*tileSize-1)
+        // Positions: CustomModelScale scales both size AND positions
+        // To get final y: 16 after scaling, we need: modelY * scaleFactor = 16
+        // Therefore: modelY = 16 / scaleFactor = 16 / (32/tileSize) = tileSize / 2
+        // Original model: size 32x32, position y:16, scale 1.0 -> final y:16 ✓
+        // Dynamic model: size tileSize x tileSize, position y:tileSize/2, scale 32/tileSize -> final y:16 ✓
+        int imageOffsetY = tileSize;
+        double scaleFactor = 32.0 / tileSize;
+        double centerY = tileSize / 2.0; // Accounts for CustomModelScale scaling positions
+        // Match the original Panel.blockymodel world-space Z values exactly
+        // CustomModelScale scales positions and sizes, so convert world Z/size to model space
+        double worldFrameZ = -15.5;
+        double worldImageZ = -14.5; // Further increased separation to prevent z-fighting on all rotation faces
+        double worldFrameSizeZ = 1.0;
+        double worldImageSizeZ = 0.1; // Thicker to ensure proper depth sorting on all faces
+        double frameZ = worldFrameZ / scaleFactor;
+        double imageZ = worldImageZ / scaleFactor;
+        double frameSizeZ = worldFrameSizeZ / scaleFactor;
+        double imageSizeZ = worldImageSizeZ / scaleFactor;
+        StringBuilder json = new StringBuilder();
+        json.append("{\n")
+                .append("  \"nodes\": [\n")
+                .append("    {\n")
+                .append("      \"id\": \"1\",\n")
+                .append("      \"name\": \"frame\",\n")
+                .append("      \"position\": {\"x\": 0, \"y\": ").append(centerY).append(", \"z\": ").append(frameZ).append("},\n")
+                .append("      \"orientation\": {\"x\": 0, \"y\": 0, \"z\": 0, \"w\": 1},\n")
+                .append("      \"shape\": {\n")
+                .append("        \"type\": \"box\",\n")
+                .append("        \"offset\": {\"x\": 0, \"y\": 0, \"z\": 0},\n")
+                .append("        \"stretch\": {\"x\": 1, \"y\": 1, \"z\": 1},\n")
+                .append("        \"settings\": {\n")
+                .append("          \"isPiece\": false,\n")
+                .append("          \"size\": {\"x\": ").append(tileSize).append(", \"y\": ").append(tileSize).append(", \"z\": ").append(frameSizeZ).append("},\n")
+                .append("          \"isStaticBox\": true\n")
+                .append("        },\n")
+                .append("        \"textureLayout\": {\n")
+                .append("          \"back\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"right\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"front\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"left\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"top\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": true, \"y\": true}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"bottom\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": true, \"y\": false}, \"angle\": 0, \"texture\": 0}\n")
+                .append("        },\n")
+                .append("        \"unwrapMode\": \"custom\",\n")
+                .append("        \"visible\": true,\n")
+                .append("        \"doubleSided\": false,\n")
+                .append("        \"shadingMode\": \"flat\"\n")
+                .append("      }\n")
+                .append("    },\n")
+                .append("    {\n")
+                .append("      \"id\": \"2\",\n")
+                .append("      \"name\": \"image\",\n")
+                .append("      \"position\": {\"x\": 0, \"y\": ").append(centerY).append(", \"z\": ").append(imageZ).append("},\n")
+                .append("      \"orientation\": {\"x\": 0, \"y\": 0, \"z\": 0, \"w\": 1},\n")
+                .append("      \"shape\": {\n")
+                .append("        \"type\": \"box\",\n")
+                .append("        \"offset\": {\"x\": 0, \"y\": 0, \"z\": 0},\n")
+                .append("        \"stretch\": {\"x\": 1, \"y\": 1, \"z\": 1},\n")
+                .append("        \"settings\": {\n")
+                .append("          \"isPiece\": false,\n")
+                .append("          \"size\": {\"x\": ").append(tileSize).append(", \"y\": ").append(tileSize).append(", \"z\": ").append(imageSizeZ).append("},\n")
+                .append("          \"isStaticBox\": true\n")
+                .append("        },\n")
+                .append("        \"textureLayout\": {\n")
+                .append("          \"back\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"right\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"front\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"left\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"top\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": true, \"y\": true}, \"angle\": 0, \"texture\": 0},\n")
+                .append("          \"bottom\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": true, \"y\": false}, \"angle\": 0, \"texture\": 0}\n")
+                .append("        },\n")
+                .append("        \"unwrapMode\": \"custom\",\n")
+                .append("        \"visible\": true,\n")
+                .append("        \"doubleSided\": true,\n")
+                .append("        \"shadingMode\": \"flat\"\n")
+                .append("      }\n")
+                .append("    }\n")
+                .append("  ],\n")
+                .append("  \"format\": \"prop\",\n")
+                .append("  \"lod\": \"auto\"\n")
+                .append("}\n");
+        return json.toString();
+    }
+    
+    private BufferedImage getPanelTexture() {
+        BufferedImage cached = panelTextureCache;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (this) {
+            if (panelTextureCache != null) {
+                return panelTextureCache;
+            }
+            BufferedImage loaded = null;
+            try (InputStream in = ImageFramesPlugin.class.getClassLoader()
+                    .getResourceAsStream("Common/Blocks/ImageFrames/Panel.png")) {
+                if (in != null) {
+                    loaded = ImageIO.read(in);
+                }
+            } catch (IOException ignored) {
+            }
+            if (loaded == null) {
+                Path fallback = Paths.get("src/main/resources/Common/Blocks/ImageFrames/Panel.png");
+                if (Files.exists(fallback)) {
+                    try {
+                        loaded = ImageIO.read(fallback.toFile());
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+            panelTextureCache = loaded;
+            return loaded;
+        }
     }
 
     private static BufferedImage resizeNearest(BufferedImage src, int w, int h) {
@@ -1363,7 +1862,8 @@ public class ImageFrameRuntimeManager {
                 continue;
             }
             String blockId = world.getBlockType(pos).getId();
-            if (!BASE_BLOCK_ID.equals(blockId)) {
+            if (!BASE_BLOCK_ID.equals(blockId) && !SLIM_BLOCK_ID.equals(blockId)
+                    && !PANEL_BLOCK_ID.equals(blockId) && !PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
                 continue;
             }
             blocks.add(pos);
@@ -1387,7 +1887,9 @@ public class ImageFrameRuntimeManager {
         int sizeZ = maxZ - minZ + 1;
 
         boolean flat = (sizeX == 1 || sizeY == 1 || sizeZ == 1);
-        GroupInfo info = new GroupInfo(worldName, minX, minY, minZ, sizeX, sizeY, sizeZ, blocks, preferredNormal);
+        String detectedBlockId = world.getBlockType(start).getId();
+        GroupInfo info = new GroupInfo(worldName, minX, minY, minZ, sizeX, sizeY, sizeZ, blocks, preferredNormal,
+                detectedBlockId);
         int expected = info.width * info.height;
         info.valid = flat && blocks.size() == expected;
         return info;
@@ -1415,30 +1917,31 @@ public class ImageFrameRuntimeManager {
             }
         }
         GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ, sizeX, sizeY, sizeZ, blocks,
-                null);
+                null, group.blockId);
         int expected = info.width * info.height;
         info.valid = (info.sizeX == 1 || info.sizeY == 1 || info.sizeZ == 1) && blocks.size() == expected;
         return info;
     }
 
     public static class GroupInfo {
-        final String worldName;
-        final int minX;
-        final int minY;
-        final int minZ;
-        final int sizeX;
-        final int sizeY;
-        final int sizeZ;
-        final List<Vector3i> blocks;
-        boolean valid;
-        final int width;
-        final int height;
-        final Axis widthAxis;
-        final Axis heightAxis;
-        final Axis normalAxis;
+        public final String worldName;
+        public final int minX;
+        public final int minY;
+        public final int minZ;
+        public final int sizeX;
+        public final int sizeY;
+        public final int sizeZ;
+        public final List<Vector3i> blocks;
+        public boolean valid;
+        public final int width;
+        public final int height;
+        public final Axis widthAxis;
+        public final Axis heightAxis;
+        public final Axis normalAxis;
+        public final String blockId;
 
         GroupInfo(String worldName, int minX, int minY, int minZ, int sizeX, int sizeY, int sizeZ,
-                List<Vector3i> blocks, Axis preferredNormal) {
+                List<Vector3i> blocks, Axis preferredNormal, String blockId) {
             this.worldName = worldName;
             this.minX = minX;
             this.minY = minY;
@@ -1478,6 +1981,7 @@ public class ImageFrameRuntimeManager {
                 }
             }
             this.normalAxis = normal;
+            this.blockId = blockId;
 
             if (normal == Axis.X) {
                 this.widthAxis = Axis.Z;

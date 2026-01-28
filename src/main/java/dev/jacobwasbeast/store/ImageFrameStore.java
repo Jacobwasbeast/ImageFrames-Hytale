@@ -126,8 +126,11 @@ public class ImageFrameStore extends BlockingDiskFile {
         public String facing;
         public boolean flipX;
         public boolean flipY;
+        public String blockId;
+        public boolean hideFrame;
         public Map<String, String> tileBlocks = new HashMap<>();
         public transient Map<String, byte[]> tilePngByPath = new HashMap<>();
+        public transient Map<Vector3i, Integer> originalRotations = new HashMap<>();
 
         public FrameGroup() {
         }
@@ -158,13 +161,15 @@ public class ImageFrameStore extends BlockingDiskFile {
                     && rot == other.rot
                     && flipX == other.flipX
                     && flipY == other.flipY
+                    && Objects.equals(blockId, other.blockId)
+                    && hideFrame == other.hideFrame
                     && Objects.equals(tileBlocks, other.tileBlocks);
         }
 
         @Override
         public int hashCode() {
             return Objects.hash(groupId, worldName, minX, minY, minZ, sizeX, sizeY, sizeZ, ownerUuid, url, fit, rot, flipX, flipY,
-                    tileBlocks);
+                    blockId, hideFrame, tileBlocks);
         }
     }
 }
