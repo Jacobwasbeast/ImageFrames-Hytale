@@ -688,9 +688,7 @@ public class ImageFrameRuntimeManager {
                     positions.add(pos);
                 }
             }
-            scheduleBlockClear(world, positions, 256, () -> scheduleRemoveGroupAssets(group, 5));
-        } else {
-            scheduleRemoveGroupAssets(group, 5);
+            scheduleBlockClear(world, positions, 256, null);
         }
     }
 
