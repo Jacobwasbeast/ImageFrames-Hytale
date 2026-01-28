@@ -36,9 +36,6 @@
       "Use": "ImageFrames_Use"
     }
   },
-  "Utility": {
-    "Usable": true
-  },
   "PlayerAnimationsId": "Block",
   "ItemSoundSetId": "ISS_Blocks_Wood",
   "Interactions": {

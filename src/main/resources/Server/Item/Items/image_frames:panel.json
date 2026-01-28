@@ -37,9 +37,6 @@
     },
     "ParticleColor": "#684127"
   },
-  "Utility": {
-    "Usable": true
-  },
   "PlayerAnimationsId": "Block",
   "ItemSoundSetId": "ISS_Blocks_Wood",
   "Interactions": {
