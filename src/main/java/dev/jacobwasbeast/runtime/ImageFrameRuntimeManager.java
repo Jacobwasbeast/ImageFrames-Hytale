@@ -738,6 +738,25 @@ public class ImageFrameRuntimeManager {
         if (group == null) {
             return;
         }
+        Map<String, FrameGroup> groupsSnapshot = store.getGroupsSnapshot();
+        Set<String> expectedBaseNames = new HashSet<>();
+        if (groupsSnapshot != null) {
+            for (FrameGroup g : groupsSnapshot.values()) {
+                if (g == null) {
+                    continue;
+                }
+                String expectedSafeId = (g.safeId != null && !g.safeId.isEmpty())
+                        ? g.safeId
+                        : sanitizeFilename(g.groupId);
+                GroupInfo gi = new GroupInfo(g.worldName, g.minX, g.minY, g.minZ,
+                        g.sizeX, g.sizeY, g.sizeZ, java.util.Collections.emptyList(), null, g.blockId);
+                for (int ty = 0; ty < gi.height; ty++) {
+                    for (int tx = 0; tx < gi.width; tx++) {
+                        expectedBaseNames.add(expectedSafeId + "_" + tx + "_" + ty);
+                    }
+                }
+            }
+        }
         String safeId = (group.safeId != null && !group.safeId.isEmpty())
                 ? group.safeId
                 : sanitizeFilename(group.groupId);
@@ -748,6 +767,9 @@ public class ImageFrameRuntimeManager {
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 String baseName = safeId + "_" + tx + "_" + ty;
+                if (expectedBaseNames.contains(baseName)) {
+                    continue;
+                }
                 String assetPath = TILE_TEXTURE_DIR + baseName + ".png";
                 Path pngPath = runtimeCommonBlocksPath.resolve(baseName + ".png");
                 Path jsonPath = runtimeBlockTypesPath.resolve(TILE_PREFIX + baseName + ".json");
