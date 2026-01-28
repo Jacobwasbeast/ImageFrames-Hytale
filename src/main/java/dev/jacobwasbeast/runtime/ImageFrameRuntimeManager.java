@@ -689,6 +689,7 @@ public class ImageFrameRuntimeManager {
                 }
             }
             scheduleBlockClear(world, positions, 256, null);
+            scheduleRemoveGroupAssets(group,5);
         }
     }
 
