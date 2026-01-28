@@ -20,7 +20,7 @@
         "Texture": "Blocks/ImageFrames/Panel.png"
       }
     ],
-    "HitboxType": "Painting",
+    "HitboxType": "Panel",
     "VariantRotation": "NESW",
     "Gathering": {
       "Soft": {
@@ -29,38 +29,6 @@
     },
     "BlockParticleSetId": "Wood",
     "BlockSoundSetId": "Wood",
-    "Support": {
-      "North": [
-        {
-          "FaceType": "Full"
-        }
-      ],
-      "South": [
-        {
-          "FaceType": "Full"
-        }
-      ],
-      "East": [
-        {
-          "FaceType": "Full"
-        }
-      ],
-      "West": [
-        {
-          "FaceType": "Full"
-        }
-      ],
-      "Up": [
-        {
-          "FaceType": "Full"
-        }
-      ],
-      "Down": [
-        {
-          "FaceType": "Full"
-        }
-      ]
-    },
     "Flags": {
       "IsUsable": true
     },

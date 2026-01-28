@@ -927,22 +927,27 @@ public class ImageFrameRuntimeManager {
             if (group == null || group.tileBlocks == null || !worldName.equals(group.worldName)) {
                 continue;
             }
-            for (java.util.Map.Entry<String, String> entry : group.tileBlocks.entrySet()) {
-                String posKey = entry.getKey();
-                String assetKey = entry.getValue();
-
-                // key format: worldName:x:y:z
-                String[] parts = posKey.split(":");
-                if (parts.length == 4) {
-                    try {
-                        int x = Integer.parseInt(parts[1]);
-                        int y = Integer.parseInt(parts[2]);
-                        int z = Integer.parseInt(parts[3]);
-                        world.setBlock(x, y, z, assetKey);
-                    } catch (NumberFormatException ignored) {
+            
+            // Build GroupInfo from stored group
+            GroupInfo info = buildGroupInfoFromStore(group);
+            if (!info.valid) {
+                continue;
+            }
+            
+            // Read rotations from current blocks before placing tiles
+            Map<Vector3i, Integer> rotations = new HashMap<>();
+            boolean isPanel = PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId);
+            if (isPanel && info.blocks != null) {
+                for (Vector3i pos : info.blocks) {
+                    int rotation = readRotation(world, pos);
+                    if (rotation >= 0) {
+                        rotations.put(pos, rotation);
                     }
                 }
             }
+            
+            // Use placeTiles to preserve rotations
+            placeTiles(world, info, group, rotations);
         }
     }
 
@@ -1018,7 +1023,7 @@ public class ImageFrameRuntimeManager {
                     .append("      \"Texture\": \"").append(texturePath).append("\"\n")
                     .append("    }\n")
                     .append("  ],\n")
-                    .append("  \"HitboxType\": \"Painting\",\n")
+                    .append("  \"HitboxType\": \"Panel\",\n")
                     .append("  \"VariantRotation\": \"NESW\",\n")
                     .append("  \"Gathering\": {\n")
                     .append("    \"Soft\": {\n")
@@ -1027,38 +1032,6 @@ public class ImageFrameRuntimeManager {
                     .append("  },\n")
                     .append("  \"BlockParticleSetId\": \"Wood\",\n")
                     .append("  \"BlockSoundSetId\": \"Wood\",\n")
-                    .append("  \"Support\": {\n")
-                    .append("    \"North\": [\n")
-                    .append("      {\n")
-                    .append("        \"FaceType\": \"Full\"\n")
-                    .append("      }\n")
-                    .append("    ],\n")
-                    .append("    \"South\": [\n")
-                    .append("      {\n")
-                    .append("        \"FaceType\": \"Full\"\n")
-                    .append("      }\n")
-                    .append("    ],\n")
-                    .append("    \"East\": [\n")
-                    .append("      {\n")
-                    .append("        \"FaceType\": \"Full\"\n")
-                    .append("      }\n")
-                    .append("    ],\n")
-                    .append("    \"West\": [\n")
-                    .append("      {\n")
-                    .append("        \"FaceType\": \"Full\"\n")
-                    .append("      }\n")
-                    .append("    ],\n")
-                    .append("    \"Up\": [\n")
-                    .append("      {\n")
-                    .append("        \"FaceType\": \"Full\"\n")
-                    .append("      }\n")
-                    .append("    ],\n")
-                    .append("    \"Down\": [\n")
-                    .append("      {\n")
-                    .append("        \"FaceType\": \"Full\"\n")
-                    .append("      }\n")
-                    .append("    ]\n")
-                    .append("  },\n")
                     .append("  \"ParticleColor\": \"#684127\"\n")
                     .append("}\n");
             return json.toString();
@@ -1092,7 +1065,7 @@ public class ImageFrameRuntimeManager {
                     .append("  \"Material\": \"Solid\",\n")
                     .append("  \"DrawType\": \"Model\",\n")
                     .append("  \"Opacity\": \"Transparent\",\n")
-                    .append("  \"HitboxType\": \"Painting\",\n")
+                    .append("  \"HitboxType\": \"Panel\",\n")
                     .append("  \"VariantRotation\": \"NESW\",\n")
                     .append("  \"CubeShadingMode\": \"Standard\",\n")
                     .append("  \"BlockSoundSetId\": \"Wood\",\n")
