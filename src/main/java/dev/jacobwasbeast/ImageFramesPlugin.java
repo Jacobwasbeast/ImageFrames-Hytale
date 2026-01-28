@@ -45,6 +45,29 @@ public class ImageFramesPlugin extends JavaPlugin {
         entityRegistry.registerSystem(new ImageFrameInteractionSystem(this));
         entityRegistry.registerSystem(new ImageFrameBreakSystem(this));
 
+        if (initialized.compareAndSet(false, true)) {
+            getLogger().at(Level.INFO).log("Server start. Starting async initialization...");
+            new Thread(() -> {
+                try {
+                    this.config.syncLoad();
+                    this.store.syncLoad();
+                    this.runtimeManager.init();
+
+                    com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR.execute(() -> {
+                        getLogger().at(Level.INFO).log("Async init complete. Broadcasting assets.");
+                        this.runtimeManager.broadcastRuntimeAssets();
+                        var defaultWorld = com.hypixel.hytale.server.core.universe.Universe.get().getDefaultWorld();
+                        if (defaultWorld != null) {
+                            this.runtimeManager.refreshFramesForWorld(defaultWorld);
+                        }
+                    });
+                } catch (Exception e) {
+                    getLogger().at(Level.SEVERE).withCause(e)
+                            .log("Failed to initialize ImageFrames asynchronously");
+                }
+            }).start();
+        }
+
         com.hypixel.hytale.server.core.HytaleServer.get().getEventBus().registerGlobal(
                 com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent.class,
                 event -> {
