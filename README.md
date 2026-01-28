@@ -11,6 +11,7 @@ ImageFrames is a Hytale mod that facilitates the display of custom images on blo
     *   **Smart Face Detection**: Automatically determines the frame's facing direction based on the block face you interact with.
 *   **Owner Locking**: Prevents other players from modifying your frames (configurable).
 *   **Interactive UI**: Easy-to-use configuration menu when interacting with frame blocks.
+*   **Panels**: Flat panels with optional hidden frame and togglable collision.
 
 ## Usage
 
@@ -21,14 +22,20 @@ ImageFrames is a Hytale mod that facilitates the display of custom images on blo
     *   **Fit**: Choose how the image fits the frame.
     *   **Rotation**: Rotate the image if needed.
     *   **Flip**: Flip horizontally or vertically.
+    *   **Panels**: Toggle **Hide Frame** and **Collision** (panels only).
 4.  **Apply**: Click "Apply" to render the image.
 
 ### Resetting Frames
  To reset an ImageFrame, simply break one of the frame blocks and rebuild the structure. This will clear the current configuration.
 
+### Panel Notes
+*   Panels can hide the frame and toggle collision from the UI.
+*   When collision is disabled, only the **top-right** panel tile can be broken to remove the whole panel.
+    This tile is prone to physics updates, so build with care.
+
 ## Crafting
 
-You can craft Image Frames at a **Furniture Bench**.
+You can craft Image Frames and Panels at a **Furniture Bench**.
 
 **Recipe:**
 *   **Category**: Furniture Misc
@@ -36,6 +43,8 @@ You can craft Image Frames at a **Furniture Bench**.
 *   9x **Wood Trunk** (Any type)
 
 **Output:** 9x Image Frames
+
+**Panel Output:** 18x Image Panels
 
 ## Screenshots
 
@@ -52,13 +61,36 @@ You can craft Image Frames at a **Furniture Bench**.
 </div>
 
 <div align="center">
+  <img src="Screenshots/Panel UI.png" alt="Panel UI Configuration" width="600"/>
+  <br>
+  <em>Panel Configuration Interface</em>
+</div>
+
+<div align="center">
   <img src="Screenshots/Block.png" alt="Block View" width="600"/>
   <br>
   <em>Frame Block</em>
+</div>
+
+<div align="center">
+  <img src="Screenshots/Panels.png" alt="Panels" width="600"/>
+  <br>
+  <em>Panels</em>
+</div>
+
+<div align="center">
+  <img src="Screenshots/With Frame.png" alt="Panel With Frame" width="600"/>
+  <br>
+  <em>Panel With Frame</em>
+</div>
+
+<div align="center">
+  <img src="Screenshots/Hidden Frame.png" alt="Panel With Hidden Frame" width="600"/>
+  <br>
+  <em>Panel With Hidden Frame</em>
 </div>
 
 ## Installation
 
 1.  Build the project using `./gradlew build`.
 2.  Place the generated JAR file into your Hytale's `mods` directory.
-
