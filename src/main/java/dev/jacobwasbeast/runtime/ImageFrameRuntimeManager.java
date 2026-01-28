@@ -309,11 +309,28 @@ public class ImageFrameRuntimeManager {
 
         BufferedImage source = loadSourceImage(url);
         int tileSize = plugin.getConfig().getTileSize();
-        BufferedImage processed = scaleImage(source, info.width * tileSize, info.height * tileSize, fit);
+        // Apply fit modes directly to target dimensions (not square first)
+        int targetW = info.width * tileSize;
+        int targetH = info.height * tileSize;
+        BufferedImage processed = scaleImage(source, targetW, targetH, fit);
         if (rot != 0) {
             processed = rotate(processed, rot);
         }
         processed = applyFlips(processed, flipX, flipY);
+        // Ensure exact target size - fit modes should handle this, but pad/crop if needed
+        if (processed.getWidth() != targetW || processed.getHeight() != targetH) {
+            BufferedImage finalImage = new BufferedImage(targetW, targetH, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = finalImage.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            // Center the image
+            int x = Math.max(0, (targetW - processed.getWidth()) / 2);
+            int y = Math.max(0, (targetH - processed.getHeight()) / 2);
+            g.drawImage(processed, x, y, null);
+            g.dispose();
+            processed = finalImage;
+        }
         // For slim frames, don't apply frame underlay - the model handles it separately with multi-texture
         // For panels, build a texture atlas (frame on left, image on right)
         if (!SLIM_BLOCK_ID.equals(blockId)) {
@@ -344,18 +361,36 @@ public class ImageFrameRuntimeManager {
         group.hideFrame = hideFrame;
         group.tileBlocks.clear();
         String panelModelPath = null;
-        if (PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
-            panelModelPath = ensurePanelModel(tileSize);
+        if (PANEL_BLOCK_ID.equals(group.blockId)) {
+            plugin.getLogger().at(Level.INFO).log("Generating panel model for tileSize=%d, hideFrame=%b", tileSize, hideFrame);
+            panelModelPath = ensurePanelModel(tileSize, hideFrame);
+            plugin.getLogger().at(Level.INFO).log("Panel model path: %s", panelModelPath);
         }
 
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 int px = tx * tileSize;
                 int py = ty * tileSize;
-                BufferedImage tile = processed.getSubimage(px, py, tileSize, tileSize);
+                // Ensure we don't go out of bounds
+                int availableW = Math.min(tileSize, processed.getWidth() - px);
+                int availableH = Math.min(tileSize, processed.getHeight() - py);
+                BufferedImage tile;
+                if (availableW == tileSize && availableH == tileSize) {
+                    tile = processed.getSubimage(px, py, tileSize, tileSize);
+                } else {
+                    // Pad to square if needed
+                    tile = new BufferedImage(tileSize, tileSize, BufferedImage.TYPE_INT_ARGB);
+                    Graphics2D gTile = tile.createGraphics();
+                    gTile.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                    gTile.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                    BufferedImage subTile = processed.getSubimage(px, py, availableW, availableH);
+                    gTile.drawImage(subTile, 0, 0, null);
+                    gTile.dispose();
+                }
                 // For panels, build texture atlas (frame on left, image on right)
-                if (PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
-                    boolean includeFrame = !PANEL_INVISIBLE_BLOCK_ID.equals(blockId) && !hideFrame;
+                if (PANEL_BLOCK_ID.equals(blockId)) {
+                    boolean includeFrame = !hideFrame;
+                    plugin.getLogger().at(Level.FINE).log("Building panel atlas for tile %d,%d with includeFrame=%b (hideFrame=%b)", tx, ty, includeFrame, hideFrame);
                     tile = buildPanelAtlas(tile, includeFrame);
                 }
 
@@ -400,11 +435,28 @@ public class ImageFrameRuntimeManager {
         String facing = group.facing != null ? group.facing : "North";
         String fit = group.fit != null ? group.fit : "stretch";
         int tileSize = plugin.getConfig().getTileSize();
-        BufferedImage processed = scaleImage(source, info.width * tileSize, info.height * tileSize, fit);
+        // Apply fit modes directly to target dimensions (not square first)
+        int targetW = info.width * tileSize;
+        int targetH = info.height * tileSize;
+        BufferedImage processed = scaleImage(source, targetW, targetH, fit);
         if (group.rot != 0) {
             processed = rotate(processed, group.rot);
         }
         processed = applyFlips(processed, group.flipX, group.flipY);
+        // Ensure exact target size - fit modes should handle this, but pad/crop if needed
+        if (processed.getWidth() != targetW || processed.getHeight() != targetH) {
+            BufferedImage finalImage = new BufferedImage(targetW, targetH, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = finalImage.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            // Center the image
+            int x = Math.max(0, (targetW - processed.getWidth()) / 2);
+            int y = Math.max(0, (targetH - processed.getHeight()) / 2);
+            g.drawImage(processed, x, y, null);
+            g.dispose();
+            processed = finalImage;
+        }
         // For slim frames, don't apply frame underlay - the model handles it separately with multi-texture
         // For panels, build a texture atlas (frame on left, image on right)
         if (!SLIM_BLOCK_ID.equals(group.blockId)) {
@@ -416,17 +468,32 @@ public class ImageFrameRuntimeManager {
 
         group.tileBlocks.clear();
         String panelModelPath = null;
-        if (PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
-            panelModelPath = ensurePanelModel(tileSize);
+        if (PANEL_BLOCK_ID.equals(group.blockId)) {
+            panelModelPath = ensurePanelModel(tileSize, group.hideFrame);
         }
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 int px = tx * tileSize;
                 int py = ty * tileSize;
-                BufferedImage tile = processed.getSubimage(px, py, tileSize, tileSize);
+                // Ensure we don't go out of bounds
+                int availableW = Math.min(tileSize, processed.getWidth() - px);
+                int availableH = Math.min(tileSize, processed.getHeight() - py);
+                BufferedImage tile;
+                if (availableW == tileSize && availableH == tileSize) {
+                    tile = processed.getSubimage(px, py, tileSize, tileSize);
+                } else {
+                    // Pad to square if needed
+                    tile = new BufferedImage(tileSize, tileSize, BufferedImage.TYPE_INT_ARGB);
+                    Graphics2D gTile = tile.createGraphics();
+                    gTile.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                    gTile.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                    BufferedImage subTile = processed.getSubimage(px, py, availableW, availableH);
+                    gTile.drawImage(subTile, 0, 0, null);
+                    gTile.dispose();
+                }
                 // For panels, build texture atlas (frame on left, image on right)
-                if (PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
-                    boolean includeFrame = !PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId) && !group.hideFrame;
+                if (PANEL_BLOCK_ID.equals(group.blockId)) {
+                    boolean includeFrame = !group.hideFrame;
                     tile = buildPanelAtlas(tile, includeFrame);
                 }
 
@@ -918,10 +985,21 @@ public class ImageFrameRuntimeManager {
 
     private String buildTileBlockTypeJson(String texturePath, Axis normalAxis, String facing, String blockId,
             boolean hideFrame, String panelModelPath, int tileSize) {
-        if (PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+        if (PANEL_BLOCK_ID.equals(blockId)) {
             // For panels, use a single atlas texture with UV offsets (frame on left, image on right)
-            // Always use the panel model
-            String model = panelModelPath != null ? panelModelPath : PANEL_MODEL_PATH;
+            // Use the panel model (generated with hideFrame parameter)
+            String model = panelModelPath;
+            if (model == null) {
+                plugin.getLogger().at(Level.WARNING).log("No model path provided for panel with hideFrame=%b, tileSize=%d", hideFrame, tileSize);
+                if (hideFrame) {
+                    // Can't use static model - it has a frame!
+                    plugin.getLogger().at(Level.SEVERE).log("Cannot create invisible panel without dynamic model!");
+                    model = PANEL_MODEL_PATH; // Will show frame, but prevents crash
+                } else {
+                    model = PANEL_MODEL_PATH;
+                }
+            }
+            plugin.getLogger().at(Level.FINE).log("Using model %s for panel block with hideFrame=%b", model, hideFrame);
             
             // Calculate scale factor: model is tileSize x tileSize, but should render at 32x32 world units
             // Scale = 32 / tileSize (e.g., 32/512 = 0.0625 for 512px tiles)
@@ -1359,6 +1437,7 @@ public class ImageFrameRuntimeManager {
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
             g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            // Keep transparent background - buildPanelAtlas will ensure proper sizing to prevent wrapping
             int x = Math.max(0, (targetW - scaledW) / 2);
             int y = Math.max(0, (targetH - scaledH) / 2);
             g.drawImage(scaled, x, y, null);
@@ -1525,56 +1604,124 @@ public class ImageFrameRuntimeManager {
         if (image == null) {
             return null;
         }
-        int imageW = image.getWidth();
-        int imageH = image.getHeight();
+        // For panels: create a square atlas matching the original Panel.blockymodel expectations
+        // The model has nodes with size=tileSize and offset y=tileSize for the image
+        // Atlas layout: (tileSize*2) x (tileSize*2) square
+        // Frame node samples from (0,0) with size tileSize x tileSize (top-left quadrant)
+        // Image node samples from (0,tileSize) with size tileSize x tileSize (bottom-left quadrant)
         
-        // Panel.png is 64x64 and contains frame parts + side parts
-        // Scale Panel.png to 2x the image size (so if image is 32x32, Panel becomes 64x64)
-        int panelScaledW = imageW * 2;
-        int panelScaledH = imageH * 2;
+        // Use the configured tileSize - this MUST match what the model generation uses
+        int tileSize = plugin.getConfig().getTileSize();
+        int atlasSize = tileSize * 2;
         
-        // Start with Panel.png, resize it to be double the size of the image
-        // Then place the image under it
-        // Atlas size: width = panelScaledW (2x image width), height = panelScaledH (2x image height)
-        // Image is placed under the front-face area (y = imageH), not under the full scaled panel height.
-        BufferedImage atlas = new BufferedImage(panelScaledW, panelScaledH, BufferedImage.TYPE_INT_ARGB);
+        BufferedImage atlas = new BufferedImage(atlasSize, atlasSize, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = atlas.createGraphics();
+        
+        // Fill with transparent background first
+        g.setComposite(java.awt.AlphaComposite.Clear);
+        g.fillRect(0, 0, atlasSize, atlasSize);
+        g.setComposite(java.awt.AlphaComposite.SrcOver);
         
         if (includeFrame) {
             BufferedImage panel = getPanelTexture();
             if (panel != null) {
-                // Scale Panel.png to 2x image size using nearest neighbor (preserves pixel art quality)
-                BufferedImage scaledPanel = resizeNearest(panel, panelScaledW, panelScaledH);
-                // Draw scaled Panel.png at the top (don't move it, just resize it)
+                // Panel.png is 64x64 - scale the entire thing to atlas size
+                // Use nearest neighbor for frame (no alpha, pixel art)
+                BufferedImage scaledPanel = resizeNearest(panel, atlasSize, atlasSize);
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
                 g.drawImage(scaledPanel, 0, 0, null);
             }
         }
         
-        // Place the image under the front-face area (y = imageH)
-        g.drawImage(image, 0, imageH, null);
+        // The image goes in the bottom-left quadrant (0, tileSize) to (tileSize, 2*tileSize)
+        // This matches the model's textureLayout offset of (0, tileSize) for the image node
+        // Scale image to tileSize x tileSize - must match exactly
+        // Use bicubic interpolation for images with alpha to properly blend transparent edges
+        BufferedImage scaledImage;
+        if (image.getWidth() == tileSize && image.getHeight() == tileSize) {
+            scaledImage = image;
+        } else {
+            // Always use bicubic for image scaling to handle alpha properly
+            scaledImage = resize(image, tileSize, tileSize);
+        }
+        
+        // For invisible frames, clean up alpha pixels to prevent artifacts
+        if (!includeFrame) {
+            scaledImage = cleanAlphaPixels(scaledImage);
+        }
+        
+        // For non-invisible frames, overlay frame texture behind the image to fix transparency issues
+        if (includeFrame) {
+            BufferedImage panel = getPanelTexture();
+            if (panel != null) {
+                // Extract the front face portion (top-left 32x32) and scale to tileSize
+                BufferedImage frameFace = panel.getSubimage(0, 0, 32, 32);
+                BufferedImage scaledFrameFace = resizeNearest(frameFace, tileSize, tileSize);
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                // Draw frame texture behind the image
+                g.drawImage(scaledFrameFace, 0, tileSize, null);
+            }
+        }
+        
+        // Use proper alpha compositing with quality rendering hints for smooth edges
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
+        g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER));
+        // Draw image on top of frame texture (or directly for invisible frames)
+        g.drawImage(scaledImage, 0, tileSize, null);
         g.dispose();
         return atlas;
     }
 
-    private String ensurePanelModel(int tileSize) {
-        String modelAssetPath = PANEL_MODEL_DIR + "Panel_" + tileSize + ".blockymodel";
+    private String ensurePanelModel(int tileSize, boolean hideFrame) {
+        String suffix = hideFrame ? "_NoFrame" : "";
+        String modelAssetPath = PANEL_MODEL_DIR + "Panel_" + tileSize + suffix + ".blockymodel";
         Path filePath = runtimeAssetsPath.resolve("Common").resolve(modelAssetPath);
         try {
-            String json = buildPanelModelJson(tileSize);
+            String json = buildPanelModelJson(tileSize, hideFrame);
             byte[] bytes = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
             boolean changed = writeBytesIfChanged(filePath, bytes);
-            if (changed || !CommonAssetRegistry.hasCommonAsset(modelAssetPath)) {
+            boolean hasAsset = CommonAssetRegistry.hasCommonAsset(modelAssetPath);
+            if (changed || !hasAsset) {
                 registerCommonAsset(modelAssetPath, filePath, bytes);
+                plugin.getLogger().at(Level.INFO).log("Generated panel model: %s (hideFrame=%b, changed=%b, hadAsset=%b)", modelAssetPath, hideFrame, changed, hasAsset);
+            } else {
+                plugin.getLogger().at(Level.FINE).log("Panel model already exists: %s (hideFrame=%b)", modelAssetPath, hideFrame);
+            }
+            // Verify the model JSON doesn't include frame node when hideFrame is true
+            if (hideFrame && json.contains("\"name\": \"frame\"")) {
+                plugin.getLogger().at(Level.SEVERE).log("ERROR: Model for hideFrame=true still contains frame node! Model path: %s", modelAssetPath);
+            }
+            if (!hideFrame && !json.contains("\"name\": \"frame\"")) {
+                plugin.getLogger().at(Level.SEVERE).log("ERROR: Model for hideFrame=false missing frame node! Model path: %s", modelAssetPath);
             }
             return modelAssetPath;
         } catch (IOException e) {
             plugin.getLogger().at(Level.WARNING).withCause(e)
-                    .log("Failed to write panel model for tileSize=%d", tileSize);
+                    .log("Failed to write panel model for tileSize=%d, hideFrame=%b", tileSize, hideFrame);
+            // Don't fall back to PANEL_MODEL_PATH when hideFrame is true - it has a frame!
+            if (hideFrame) {
+                plugin.getLogger().at(Level.SEVERE).log("Cannot use fallback model for invisible frame - model generation failed!");
+                // Try to generate a simple no-frame model as emergency fallback
+                try {
+                    String emergencyJson = "{\"nodes\":[{\"id\":\"2\",\"name\":\"image\",\"position\":{\"x\":0,\"y\":" + (tileSize/2.0) + ",\"z\":" + (-14.5 / (32.0/tileSize)) + "},\"orientation\":{\"x\":0,\"y\":0,\"z\":0,\"w\":1},\"shape\":{\"type\":\"box\",\"offset\":{\"x\":0,\"y\":0,\"z\":0},\"stretch\":{\"x\":1,\"y\":1,\"z\":1},\"settings\":{\"isPiece\":false,\"size\":{\"x\":" + tileSize + ",\"y\":" + tileSize + ",\"z\":" + (0.1 / (32.0/tileSize)) + "},\"isStaticBox\":true},\"textureLayout\":{\"back\":{\"offset\":{\"x\":0,\"y\":" + tileSize + "},\"mirror\":{\"x\":false,\"y\":false},\"angle\":0,\"texture\":0},\"right\":{\"offset\":{\"x\":0,\"y\":" + tileSize + "},\"mirror\":{\"x\":false,\"y\":false},\"angle\":0,\"texture\":0},\"front\":{\"offset\":{\"x\":0,\"y\":" + tileSize + "},\"mirror\":{\"x\":false,\"y\":false},\"angle\":0,\"texture\":0},\"left\":{\"offset\":{\"x\":0,\"y\":" + tileSize + "},\"mirror\":{\"x\":false,\"y\":false},\"angle\":0,\"texture\":0},\"top\":{\"offset\":{\"x\":0,\"y\":" + tileSize + "},\"mirror\":{\"x\":true,\"y\":true},\"angle\":0,\"texture\":0},\"bottom\":{\"offset\":{\"x\":0,\"y\":" + tileSize + "},\"mirror\":{\"x\":true,\"y\":false},\"angle\":0,\"texture\":0}},\"unwrapMode\":\"custom\",\"visible\":true,\"doubleSided\":true,\"shadingMode\":\"flat\"}}],\"format\":\"prop\",\"lod\":\"auto\"}";
+                    byte[] emergencyBytes = emergencyJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    writeBytesIfChanged(filePath, emergencyBytes);
+                    registerCommonAsset(modelAssetPath, filePath, emergencyBytes);
+                    plugin.getLogger().at(Level.WARNING).log("Created emergency no-frame model");
+                    return modelAssetPath;
+                } catch (Exception ex) {
+                    plugin.getLogger().at(Level.SEVERE).withCause(ex).log("Emergency model creation also failed!");
+                    return null;
+                }
+            }
             return PANEL_MODEL_PATH;
         }
     }
 
-    private String buildPanelModelJson(int tileSize) {
+    private String buildPanelModelJson(int tileSize, boolean hideFrame) {
         // Model size must match tileSize to use the full texture resolution
         // Frame node: uses Panel.png portion (top half of atlas, y: 0 to tileSize-1)
         // Image node: uses image portion (bottom half of atlas, y: tileSize to 2*tileSize-1)
@@ -1586,20 +1733,20 @@ public class ImageFrameRuntimeManager {
         int imageOffsetY = tileSize;
         double scaleFactor = 32.0 / tileSize;
         double centerY = tileSize / 2.0; // Accounts for CustomModelScale scaling positions
-        // Match the original Panel.blockymodel world-space Z values exactly
-        // CustomModelScale scales positions and sizes, so convert world Z/size to model space
-        double worldFrameZ = -15.5;
-        double worldImageZ = -14.5; // Further increased separation to prevent z-fighting on all rotation faces
-        double worldFrameSizeZ = 1.0;
-        double worldImageSizeZ = 0.1; // Thicker to ensure proper depth sorting on all faces
-        double frameZ = worldFrameZ / scaleFactor;
-        double imageZ = worldImageZ / scaleFactor;
-        double frameSizeZ = worldFrameSizeZ / scaleFactor;
-        double imageSizeZ = worldImageSizeZ / scaleFactor;
+        // Match the example structure: positions and sizes in model space (not world space)
+        // For tileSize=256: frame z=-124, image z=-116, frame size z=8, image size z=0.8
+        // Scale these values proportionally for other tileSizes
+        double frameZ = -124.0 * (tileSize / 256.0);
+        double imageZ = hideFrame ? frameZ : (-116.0 * (tileSize / 256.0)); // Flush with wall when no frame
+        double frameSizeZ = 8.0 * (tileSize / 256.0);
+        double imageSizeZ = 0.8 * (tileSize / 256.0);
         StringBuilder json = new StringBuilder();
         json.append("{\n")
-                .append("  \"nodes\": [\n")
-                .append("    {\n")
+                .append("  \"nodes\": [\n");
+        
+        // Only add frame node if not hiding frame
+        if (!hideFrame) {
+            json.append("    {\n")
                 .append("      \"id\": \"1\",\n")
                 .append("      \"name\": \"frame\",\n")
                 .append("      \"position\": {\"x\": 0, \"y\": ").append(centerY).append(", \"z\": ").append(frameZ).append("},\n")
@@ -1614,20 +1761,46 @@ public class ImageFrameRuntimeManager {
                 .append("          \"isStaticBox\": true\n")
                 .append("        },\n")
                 .append("        \"textureLayout\": {\n")
-                .append("          \"back\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"right\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"front\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"left\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"top\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": true, \"y\": true}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"bottom\": {\"offset\": {\"x\": 0, \"y\": 0}, \"mirror\": {\"x\": true, \"y\": false}, \"angle\": 0, \"texture\": 0}\n")
+                .append("          \"back\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": 0},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"right\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": 0},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"front\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": 0},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"left\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": 0},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"top\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": 0},\n")
+                .append("            \"mirror\": {\"x\": true, \"y\": true},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"bottom\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": 0},\n")
+                .append("            \"mirror\": {\"x\": true, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          }\n")
                 .append("        },\n")
                 .append("        \"unwrapMode\": \"custom\",\n")
                 .append("        \"visible\": true,\n")
                 .append("        \"doubleSided\": false,\n")
                 .append("        \"shadingMode\": \"flat\"\n")
                 .append("      }\n")
-                .append("    },\n")
-                .append("    {\n")
+                .append("    },\n");
+        }
+        
+        json.append("    {\n")
                 .append("      \"id\": \"2\",\n")
                 .append("      \"name\": \"image\",\n")
                 .append("      \"position\": {\"x\": 0, \"y\": ").append(centerY).append(", \"z\": ").append(imageZ).append("},\n")
@@ -1642,16 +1815,40 @@ public class ImageFrameRuntimeManager {
                 .append("          \"isStaticBox\": true\n")
                 .append("        },\n")
                 .append("        \"textureLayout\": {\n")
-                .append("          \"back\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"right\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"front\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"left\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": false, \"y\": false}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"top\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": true, \"y\": true}, \"angle\": 0, \"texture\": 0},\n")
-                .append("          \"bottom\": {\"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("}, \"mirror\": {\"x\": true, \"y\": false}, \"angle\": 0, \"texture\": 0}\n")
+                .append("          \"back\": {\n")
+                .append("            \"offset\": {\"x\": ").append(imageOffsetY).append(", \"y\": 0},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"right\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"front\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"left\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"top\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("},\n")
+                .append("            \"mirror\": {\"x\": true, \"y\": true},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"bottom\": {\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": ").append(imageOffsetY).append("},\n")
+                .append("            \"mirror\": {\"x\": true, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          }\n")
                 .append("        },\n")
                 .append("        \"unwrapMode\": \"custom\",\n")
                 .append("        \"visible\": true,\n")
-                .append("        \"doubleSided\": true,\n")
+                .append("        \"doubleSided\": false,\n")
                 .append("        \"shadingMode\": \"flat\"\n")
                 .append("      }\n")
                 .append("    }\n")
@@ -1691,6 +1888,25 @@ public class ImageFrameRuntimeManager {
             panelTextureCache = loaded;
             return loaded;
         }
+    }
+
+    private static BufferedImage cleanAlphaPixels(BufferedImage src) {
+        // Remove or blend alpha pixels to prevent artifacts on invisible frames
+        // Make pixels with low alpha fully transparent
+        BufferedImage cleaned = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < src.getHeight(); y++) {
+            for (int x = 0; x < src.getWidth(); x++) {
+                int rgb = src.getRGB(x, y);
+                int alpha = (rgb >>> 24) & 0xFF;
+                // If alpha is below threshold (semi-transparent edge pixels), make fully transparent
+                if (alpha < 128) {
+                    cleaned.setRGB(x, y, 0x00000000); // Fully transparent
+                } else {
+                    cleaned.setRGB(x, y, rgb);
+                }
+            }
+        }
+        return cleaned;
     }
 
     private static BufferedImage resizeNearest(BufferedImage src, int w, int h) {

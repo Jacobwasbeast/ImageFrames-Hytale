@@ -281,7 +281,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                         .append("@Fit", "#FitDropdown.Value")
                         .append("@Rotation", "#RotationInput.Value")
                         .append("@FlipX", "#FlipXContainer #CheckBox.Value")
-                        .append("@FlipY", "#FlipYContainer #CheckBox.Value"),
+                        .append("@FlipY", "#FlipYContainer #CheckBox.Value")
+                        .append("@HideFrame", "#HideFrameContainer #CheckBox.Value"),
                 false);
         eventBuilder.addEventBinding(CustomUIEventBindingType.Activating, "#CancelButton",
                 EventData.of("Action", "Cancel"), false);
