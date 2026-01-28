@@ -58,6 +58,7 @@ public class ImageFramesPlugin extends JavaPlugin {
 
                                 com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR.execute(() -> {
                                     getLogger().at(Level.INFO).log("Async init complete. Broadcasting assets.");
+                                    this.runtimeManager.startIntegrityChecks(2);
                                     this.runtimeManager.broadcastRuntimeAssets();
                                     this.runtimeManager.refreshFramesForWorld(event.getPlayer().getWorld());
                                 });

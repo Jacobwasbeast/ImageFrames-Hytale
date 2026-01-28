@@ -1,6 +1,7 @@
 package dev.jacobwasbeast.interaction;
 
 import com.hypixel.hytale.component.AddReason;
+import com.hypixel.hytale.component.Archetype;
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.Store;
@@ -12,7 +13,6 @@ import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.event.events.ecs.BreakBlockEvent;
 import com.hypixel.hytale.server.core.inventory.ItemStack;
 import com.hypixel.hytale.server.core.modules.entity.item.ItemComponent;
-import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import dev.jacobwasbeast.ImageFramesPlugin;
 import dev.jacobwasbeast.runtime.ImageFrameRuntimeManager;
@@ -50,12 +50,12 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
                 if (group.blockId != null) {
                     if (ImageFrameRuntimeManager.SLIM_BLOCK_ID.equals(group.blockId)) {
                         dropItemId = ImageFrameRuntimeManager.SLIM_BLOCK_ID;
-                    } else if (ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId) 
+                    } else if (ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId)
                             || ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
                         dropItemId = ImageFrameRuntimeManager.PANEL_BLOCK_ID;
                     }
                 }
-                
+
                 Vector3d dropPos = new Vector3d(
                         event.getTargetBlock().getX() + 0.5,
                         event.getTargetBlock().getY() + 0.5,
@@ -79,7 +79,7 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
     @Nonnull
     @Override
     public Query<EntityStore> getQuery() {
-        return Query.and(PlayerRef.getComponentType());
+        return Archetype.empty();
     }
 
     private boolean isFrameBlock(String blockId) {
