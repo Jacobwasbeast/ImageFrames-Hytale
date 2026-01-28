@@ -66,7 +66,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             commandBuilder.set("#FlipXContainer #CheckBox.Value", group.flipX);
             commandBuilder.set("#FlipYContainer #CheckBox.Value", group.flipY);
             // Only show hideFrame and collision checkboxes for panels
-            boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId) 
+            boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId)
                     || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId);
             if (isPanel) {
                 commandBuilder.set("#HideFrameContainer.Visible", true);
@@ -84,12 +84,12 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                     var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
                     if (blockType != null) {
                         String blockId = blockType.getId();
-                        boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId) 
+                        boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)
                                 || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
                         commandBuilder.set("#HideFrameContainer.Visible", isPanel);
                         commandBuilder.set("#CollisionContainer.Visible", isPanel);
                         if (isPanel) {
-                            commandBuilder.set("#HideFrameContainer #CheckBox.Value", 
+                            commandBuilder.set("#HideFrameContainer #CheckBox.Value",
                                     dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId));
                             commandBuilder.set("#CollisionContainer #CheckBox.Value", true); // Default to collision enabled
                         }
@@ -154,6 +154,16 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         if (world == null || blockPos == null) {
             playerRef.sendMessage(Message.raw("Missing target block."));
             return;
+        }
+        // Close UI immediately for panels when applying an image.
+        try {
+            var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+            String blockId = blockType != null ? blockType.getId() : null;
+            if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)
+                    || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+                player.getPageManager().setPage(ref, store, Page.None);
+            }
+        } catch (Exception ignored) {
         }
 
         final String finalUrl = url;
@@ -222,7 +232,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
 
             FrameGroup previousGroup = plugin.getStore().getGroupByPos(world.getName(), blockPos);
             // Read rotation from ORIGINAL blocks BEFORE placePlaceholder replaces them
-            java.util.Map<com.hypixel.hytale.math.vector.Vector3i, Integer> originalRotations = 
+            java.util.Map<com.hypixel.hytale.math.vector.Vector3i, Integer> originalRotations =
                     plugin.getRuntimeManager().readOriginalRotations(world, info);
             plugin.getRuntimeManager().placePlaceholder(world, info, originalRotations);
 
