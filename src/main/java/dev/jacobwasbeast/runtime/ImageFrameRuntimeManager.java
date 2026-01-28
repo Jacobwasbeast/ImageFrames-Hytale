@@ -2323,6 +2323,8 @@ public class ImageFrameRuntimeManager {
 
     private GroupInfo collectGroup(World world, Vector3i start, Axis preferredNormal) {
         String worldName = world.getName();
+        String startBlockId = world.getBlockType(start).getId();
+        boolean panelsOnly = isPanelBlockId(startBlockId);
         Set<String> visited = new HashSet<>();
         ArrayDeque<Vector3i> queue = new ArrayDeque<>();
         queue.add(start);
@@ -2343,7 +2345,11 @@ public class ImageFrameRuntimeManager {
                 continue;
             }
             String blockId = world.getBlockType(pos).getId();
-            if (!BASE_BLOCK_ID.equals(blockId) && !SLIM_BLOCK_ID.equals(blockId)
+            if (panelsOnly) {
+                if (!isPanelBlockId(blockId)) {
+                    continue;
+                }
+            } else if (!BASE_BLOCK_ID.equals(blockId) && !SLIM_BLOCK_ID.equals(blockId)
                     && !PANEL_BLOCK_ID.equals(blockId) && !PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
                 continue;
             }
@@ -2402,6 +2408,10 @@ public class ImageFrameRuntimeManager {
         int expected = info.width * info.height;
         info.valid = (info.sizeX == 1 || info.sizeY == 1 || info.sizeZ == 1) && blocks.size() == expected;
         return info;
+    }
+
+    private boolean isPanelBlockId(String blockId) {
+        return PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
     }
 
     public static class GroupInfo {
