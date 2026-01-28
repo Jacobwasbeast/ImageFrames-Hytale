@@ -13,6 +13,7 @@ customUI.flipXPlaceholder = true/false
 customUI.flipYLabel = Flip Vertical
 customUI.flipYPlaceholder = true/false
 customUI.hideFrameLabel = Hide Frame
+customUI.collisionLabel = Collision
 customUI.apply = Apply
 customUI.cancel = Cancel
 item.frame.name = Image Frame

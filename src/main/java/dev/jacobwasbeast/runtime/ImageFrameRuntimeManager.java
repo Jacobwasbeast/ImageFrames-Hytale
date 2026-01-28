@@ -272,7 +272,7 @@ public class ImageFrameRuntimeManager {
                     // Default tileSize for existing tiles (will be overridden for panels)
                     int defaultTileSize = 32;
                     writeStringIfChanged(jsonPath,
-                            buildTileBlockTypeJson(assetPath, normalAxis, facing, BASE_BLOCK_ID, false, null, defaultTileSize));
+                            buildTileBlockTypeJson(assetPath, normalAxis, facing, BASE_BLOCK_ID, false, null, defaultTileSize, true, false));
                 } catch (IOException e) {
                     plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to write tile block type %s",
                             tileKey);
@@ -301,7 +301,7 @@ public class ImageFrameRuntimeManager {
     }
 
     public FrameGroup buildGroupAssets(GroupInfo info, String url, String fit, int rot, boolean flipX, boolean flipY,
-            String ownerUuid, String facing, String blockId, boolean hideFrame)
+            String ownerUuid, String facing, String blockId, boolean hideFrame, boolean collision)
             throws IOException {
         String groupId = info.worldName + ":" + info.minX + ":" + info.minY + ":" + info.minZ + ":" + info.sizeX + "x"
                 + info.sizeY + "x" + info.sizeZ;
@@ -359,6 +359,7 @@ public class ImageFrameRuntimeManager {
         group.facing = facing;
         group.blockId = blockId;
         group.hideFrame = hideFrame;
+        group.collision = collision;
         group.tileBlocks.clear();
         String panelModelPath = null;
         if (PANEL_BLOCK_ID.equals(group.blockId)) {
@@ -405,9 +406,11 @@ public class ImageFrameRuntimeManager {
                     registerCommonAsset(assetPath, filePath, pngBytes);
                 }
                 Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
+                // Bottom-left tile is at tx=0, ty=0
+                boolean isBottomLeft = (tx == 0 && ty == 0);
                 boolean jsonChanged = writeStringIfChanged(jsonPath,
                         buildTileBlockTypeJson(assetPath, info.normalAxis, facing, group.blockId, group.hideFrame,
-                                panelModelPath, tileSize));
+                                panelModelPath, tileSize, group.collision, isBottomLeft));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
                 }
@@ -508,9 +511,11 @@ public class ImageFrameRuntimeManager {
                     registerCommonAsset(assetPath, filePath, pngBytes);
                 }
                 Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
+                // Bottom-left tile is at tx=0, ty=0
+                boolean isBottomLeft = (tx == 0 && ty == 0);
                 boolean jsonChanged = writeStringIfChanged(jsonPath,
                         buildTileBlockTypeJson(assetPath, info.normalAxis, facing, group.blockId, group.hideFrame,
-                                panelModelPath, tileSize));
+                                panelModelPath, tileSize, group.collision, isBottomLeft));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
                 }
@@ -989,7 +994,7 @@ public class ImageFrameRuntimeManager {
     }
 
     private String buildTileBlockTypeJson(String texturePath, Axis normalAxis, String facing, String blockId,
-            boolean hideFrame, String panelModelPath, int tileSize) {
+            boolean hideFrame, String panelModelPath, int tileSize, boolean collision, boolean isBottomLeft) {
         if (PANEL_BLOCK_ID.equals(blockId)) {
             // For panels, use a single atlas texture with UV offsets (frame on left, image on right)
             // Use the panel model (generated with hideFrame parameter)
@@ -1012,9 +1017,18 @@ public class ImageFrameRuntimeManager {
 
             // Match static panel JSON exactly, minus Flags/Interactions, plus CustomModelTexture
             StringBuilder json = new StringBuilder();
-            json.append("{\n")
-                    .append("  \"Material\": \"Solid\",\n")
-                    .append("  \"DrawType\": \"Model\",\n")
+            json.append("{\n");
+            if (collision) {
+                // Collision enabled: all tiles use Solid material
+                json.append("  \"Material\": \"Solid\",\n");
+            } else if (isBottomLeft) {
+                // Collision disabled AND bottom-left tile: Material Empty with Support
+                json.append("  \"Material\": \"Empty\",\n");
+            } else {
+                // Collision disabled AND NOT bottom-left: Material Solid with thin hitbox
+                json.append("  \"Material\": \"Solid\",\n");
+            }
+            json.append("  \"DrawType\": \"Model\",\n")
                     .append("  \"Opacity\": \"Transparent\",\n")
                     .append("  \"CustomModel\": \"").append(model).append("\",\n")
                     .append("  \"CustomModelScale\": ").append(scaleFactor).append(",\n")
@@ -1022,15 +1036,59 @@ public class ImageFrameRuntimeManager {
                     .append("    {\n")
                     .append("      \"Texture\": \"").append(texturePath).append("\"\n")
                     .append("    }\n")
-                    .append("  ],\n")
-                    .append("  \"HitboxType\": \"Panel\",\n")
-                    .append("  \"VariantRotation\": \"NESW\",\n")
+                    .append("  ],\n");
+            if (collision) {
+                // Collision enabled: all tiles use normal Panel hitbox
+                json.append("  \"HitboxType\": \"Panel\",\n");
+            } else if (isBottomLeft) {
+                // Collision disabled AND bottom-left: normal Panel hitbox (needed for Support)
+                json.append("  \"HitboxType\": \"Panel\",\n");
+            } else {
+                // Collision disabled AND NOT bottom-left: thin hitbox for interaction only
+                json.append("  \"HitboxType\": \"Panel_NoCollision\",\n");
+            }
+            if (!collision && isBottomLeft) {
+                // Bottom-left tile needs Support section when collision is disabled - support from all directions
+                json.append("  \"Support\": {\n")
+                        .append("    \"Down\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"North\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"South\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"East\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"West\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"Up\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ]\n")
+                        .append("  },\n");
+            }
+            json.append("  \"VariantRotation\": \"NESW\",\n")
                     .append("  \"Gathering\": {\n")
                     .append("    \"Soft\": {\n")
                     .append("      \"IsWeaponBreakable\": false\n")
                     .append("    }\n")
-                    .append("  },\n")
-                    .append("  \"BlockParticleSetId\": \"Wood\",\n")
+                    .append("  },\n");
+            json.append("  \"BlockParticleSetId\": \"Wood\",\n")
                     .append("  \"BlockSoundSetId\": \"Wood\",\n")
                     .append("  \"ParticleColor\": \"#684127\"\n")
                     .append("}\n");

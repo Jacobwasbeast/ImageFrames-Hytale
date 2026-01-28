@@ -65,14 +65,17 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             commandBuilder.set("#RotationInput.Value", String.valueOf(group.rot));
             commandBuilder.set("#FlipXContainer #CheckBox.Value", group.flipX);
             commandBuilder.set("#FlipYContainer #CheckBox.Value", group.flipY);
-            // Only show hideFrame checkbox for panels
+            // Only show hideFrame and collision checkboxes for panels
             boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId) 
                     || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId);
             if (isPanel) {
                 commandBuilder.set("#HideFrameContainer.Visible", true);
                 commandBuilder.set("#HideFrameContainer #CheckBox.Value", group.hideFrame);
+                commandBuilder.set("#CollisionContainer.Visible", true);
+                commandBuilder.set("#CollisionContainer #CheckBox.Value", group.collision);
             } else {
                 commandBuilder.set("#HideFrameContainer.Visible", false);
+                commandBuilder.set("#CollisionContainer.Visible", false);
             }
         } else {
             // Check if current block is a panel
@@ -84,16 +87,20 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                         boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId) 
                                 || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
                         commandBuilder.set("#HideFrameContainer.Visible", isPanel);
+                        commandBuilder.set("#CollisionContainer.Visible", isPanel);
                         if (isPanel) {
                             commandBuilder.set("#HideFrameContainer #CheckBox.Value", 
                                     dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId));
+                            commandBuilder.set("#CollisionContainer #CheckBox.Value", true); // Default to collision enabled
                         }
                     }
                 } catch (Exception ignored) {
                     commandBuilder.set("#HideFrameContainer.Visible", false);
+                    commandBuilder.set("#CollisionContainer.Visible", false);
                 }
             } else {
                 commandBuilder.set("#HideFrameContainer.Visible", false);
+                commandBuilder.set("#CollisionContainer.Visible", false);
             }
         }
 
@@ -226,19 +233,22 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
                 blockId = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID;
             }
-            // Get hideFrame from UI (for panels)
+            // Get hideFrame and collision from UI (for panels)
             boolean hideFrame = false;
+            boolean collision = true; // Default to collision enabled
             if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)) {
                 hideFrame = data.hideFrame;
+                collision = data.collision;
             }
             final String finalBlockId = blockId;
             final boolean finalHideFrame = hideFrame;
+            final boolean finalCollision = collision;
             java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> {
                         try {
                             return plugin.getRuntimeManager().buildGroupAssets(info, finalUrl, finalFit, finalRot,
                                     finalFlipX,
-                                    finalFlipY, finalOwnerUuid, facing, finalBlockId, finalHideFrame);
+                                    finalFlipY, finalOwnerUuid, facing, finalBlockId, finalHideFrame, finalCollision);
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
@@ -344,6 +354,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                 .add()
                 .append(new KeyedCodec<>("@HideFrame", Codec.BOOLEAN), (d, v) -> d.hideFrame = v, d -> d.hideFrame)
                 .add()
+                .append(new KeyedCodec<>("@Collision", Codec.BOOLEAN), (d, v) -> d.collision = v, d -> d.collision)
+                .add()
                 .build();
 
         public String action;
@@ -353,5 +365,6 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         public boolean flipX;
         public boolean flipY;
         public boolean hideFrame;
+        public boolean collision;
     }
 }

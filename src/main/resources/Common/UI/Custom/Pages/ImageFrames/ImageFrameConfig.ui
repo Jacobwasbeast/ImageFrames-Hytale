@@ -97,6 +97,16 @@ $C.@Container {
                     Anchor: (Width: 160, Height: 24);
                 }
             }
+
+            Group {
+                LayoutMode: Left;
+                Anchor: (Top: 10, Height: 28);
+
+                $C.@CheckBoxWithLabel #CollisionContainer {
+                    @Text = %imageFrames.customUI.collisionLabel;
+                    Anchor: (Width: 160, Height: 24);
+                }
+            }
         }
 
         Group {
