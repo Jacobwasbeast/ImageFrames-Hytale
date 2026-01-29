@@ -230,8 +230,10 @@ public class ImageFrameRuntimeManager {
                 String safeId = (group.safeId != null && !group.safeId.isEmpty())
                         ? group.safeId
                         : sanitizeFilename(group.groupId);
-                GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ,
-                        group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null, group.blockId);
+                GroupInfo info = buildGroupInfoFromStore(group);
+                if (!info.valid) {
+                    continue;
+                }
                 for (int ty = 0; ty < info.height; ty++) {
                     for (int tx = 0; tx < info.width; tx++) {
                         expectedBaseNames.add(safeId + "_" + tx + "_" + ty);
@@ -488,6 +490,7 @@ public class ImageFrameRuntimeManager {
         group.blockId = blockId;
         group.hideFrame = hideFrame;
         group.collision = collision;
+        group.normalAxis = info.normalAxis != null ? info.normalAxis.name() : null;
         group.tileBlocks.clear();
         String panelModelPath = null;
         if (PANEL_BLOCK_ID.equals(group.blockId)) {
@@ -563,7 +566,17 @@ public class ImageFrameRuntimeManager {
                 ? group.safeId
                 : sanitizeFilename(group.groupId);
         group.safeId = safeId;
-        String facing = group.facing != null ? group.facing : "North";
+        String facing = group.facing != null ? group.facing : parseFacingFromTileName(group.safeId);
+        if (facing == null) {
+            facing = "North";
+        }
+        Axis forcedAxis = axisFromFacing(group.normalAxis);
+        if (forcedAxis == null) {
+            forcedAxis = axisFromFacing(facing);
+        }
+        if (group.normalAxis == null && info != null && info.normalAxis != null) {
+            group.normalAxis = info.normalAxis.name();
+        }
         String fit = group.fit != null ? group.fit : "stretch";
         int tileSize = plugin.getConfig().getTileSize();
         // Apply fit modes directly to target dimensions (not square first)
@@ -642,7 +655,8 @@ public class ImageFrameRuntimeManager {
                 // Bottom-left tile is at tx=0, ty=0
                 boolean isBottomLeft = (tx == 0 && ty == 0);
                 boolean jsonChanged = writeStringIfChanged(jsonPath,
-                        buildTileBlockTypeJson(assetPath, info.normalAxis, facing, group.blockId, group.hideFrame,
+                        buildTileBlockTypeJson(assetPath, forcedAxis != null ? forcedAxis : info.normalAxis,
+                                facing, group.blockId, group.hideFrame,
                                 panelModelPath, tileSize, group.collision, isBottomLeft));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
@@ -2424,8 +2438,26 @@ public class ImageFrameRuntimeManager {
                 }
             }
         }
+        Axis preferred = axisFromFacing(group != null ? group.normalAxis : null);
+        if (preferred == null) {
+            preferred = axisFromFacing(group != null ? group.facing : null);
+        }
+        if (preferred == null && group != null && group.tileBlocks != null && !group.tileBlocks.isEmpty()) {
+            String sampleKey = group.tileBlocks.values().iterator().next();
+            String baseName = sampleKey != null && sampleKey.startsWith(TILE_PREFIX)
+                    ? sampleKey.substring(TILE_PREFIX.length())
+                    : sampleKey;
+            String parsedFacing = parseFacingFromTileName(baseName);
+            preferred = axisFromFacing(parsedFacing);
+            if (group.facing == null && parsedFacing != null) {
+                group.facing = parsedFacing;
+            }
+        }
+        if (preferred != null && group != null && group.normalAxis == null) {
+            group.normalAxis = preferred.name();
+        }
         GroupInfo info = new GroupInfo(group.worldName, group.minX, group.minY, group.minZ, sizeX, sizeY, sizeZ, blocks,
-                null, group.blockId);
+                preferred, group.blockId);
         int expected = info.width * info.height;
         info.valid = (info.sizeX == 1 || info.sizeY == 1 || info.sizeZ == 1) && blocks.size() == expected;
         return info;
@@ -2433,6 +2465,32 @@ public class ImageFrameRuntimeManager {
 
     private boolean isPanelBlockId(String blockId) {
         return PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
+    }
+
+    private Axis axisFromFacing(String facing) {
+        if (facing == null) {
+            return null;
+        }
+        String f = facing.trim().toLowerCase();
+        if (f.equals("x")) {
+            return Axis.X;
+        }
+        if (f.equals("y")) {
+            return Axis.Y;
+        }
+        if (f.equals("z")) {
+            return Axis.Z;
+        }
+        if (f.equals("up") || f.equals("down")) {
+            return Axis.Y;
+        }
+        if (f.equals("east") || f.equals("west")) {
+            return Axis.X;
+        }
+        if (f.equals("north") || f.equals("south")) {
+            return Axis.Z;
+        }
+        return null;
     }
 
     public static class GroupInfo {

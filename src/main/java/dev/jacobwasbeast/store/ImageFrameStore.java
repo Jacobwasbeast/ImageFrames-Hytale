@@ -129,6 +129,7 @@ public class ImageFrameStore extends BlockingDiskFile {
         public String blockId;
         public boolean hideFrame;
         public boolean collision = true; // Default to collision enabled
+        public String normalAxis;
         public Map<String, String> tileBlocks = new HashMap<>();
         public transient Map<String, byte[]> tilePngByPath = new HashMap<>();
         public transient Map<Vector3i, Integer> originalRotations = new HashMap<>();
