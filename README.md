@@ -48,6 +48,14 @@ You can craft Image Frames and Panels at a **Furniture Bench**.
 
 **Panel Output:** 18x Image Panels
 
+**Banner Recipe:**
+*   **Category**: Furniture Misc
+*   10x **Life Essence**
+*   3x **Wood Trunk** (Any type)
+*   7x **Rubble**
+
+**Banner Output:** 1x Image Banner
+
 ## Screenshots
 
 <div align="center">
