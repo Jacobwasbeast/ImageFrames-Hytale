@@ -50,8 +50,9 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
                 if (group.blockId != null) {
                     if (ImageFrameRuntimeManager.SLIM_BLOCK_ID.equals(group.blockId)) {
                         dropItemId = ImageFrameRuntimeManager.SLIM_BLOCK_ID;
-                    } else if (ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId)
-                            || ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
+                    } else if (ImageFrameRuntimeManager.BANNER_BLOCK_ID.equals(group.blockId)) {
+                        dropItemId = ImageFrameRuntimeManager.BANNER_BLOCK_ID;
+                    } else if (ImageFrameRuntimeManager.isPanelBlockId(group.blockId)) {
                         dropItemId = ImageFrameRuntimeManager.PANEL_BLOCK_ID;
                     }
                 }
@@ -83,10 +84,6 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
     }
 
     private boolean isFrameBlock(String blockId) {
-        return ImageFrameRuntimeManager.BASE_BLOCK_ID.equals(blockId)
-                || ImageFrameRuntimeManager.SLIM_BLOCK_ID.equals(blockId)
-                || ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)
-                || ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId)
-                || (blockId != null && blockId.startsWith(ImageFrameRuntimeManager.TILE_PREFIX));
+        return ImageFrameRuntimeManager.isFrameBlockId(blockId);
     }
 }

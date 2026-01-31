@@ -69,10 +69,6 @@ public class ImageFrameInteractionSystem extends EntityEventSystem<EntityStore, 
     }
 
     private boolean isFrameBlock(String blockId) {
-        return ImageFrameRuntimeManager.BASE_BLOCK_ID.equals(blockId)
-                || ImageFrameRuntimeManager.SLIM_BLOCK_ID.equals(blockId)
-                || ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)
-                || ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId)
-                || (blockId != null && blockId.startsWith(ImageFrameRuntimeManager.TILE_PREFIX));
+        return ImageFrameRuntimeManager.isFrameBlockId(blockId);
     }
 }

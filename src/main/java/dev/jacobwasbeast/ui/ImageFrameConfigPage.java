@@ -47,12 +47,26 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
     @Override
     public void build(@Nonnull Ref<EntityStore> ref, @Nonnull UICommandBuilder commandBuilder,
             @Nonnull UIEventBuilder eventBuilder, @Nonnull Store<EntityStore> store) {
-        commandBuilder.append("Pages/ImageFrames/ImageFrameConfig.ui");
-
         var world = store.getExternalData().getWorld();
         FrameGroup group = null;
         if (blockPos != null && world != null) {
             group = plugin.getStore().getGroupByPos(world.getName(), blockPos);
+        }
+        boolean isBanner = group != null
+                && dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isBannerBlockId(group.blockId);
+        if (!isBanner && blockPos != null && world != null) {
+            try {
+                var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+                String blockId = blockType != null ? blockType.getId() : null;
+                isBanner = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isBannerBlockId(blockId);
+            } catch (Exception ignored) {
+                isBanner = false;
+            }
+        }
+        if (isBanner) {
+            commandBuilder.append("Pages/ImageFrames/ImageFrameConfig_Banner.ui");
+        } else {
+            commandBuilder.append("Pages/ImageFrames/ImageFrameConfig.ui");
         }
 
         if (group != null) {
@@ -66,8 +80,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             commandBuilder.set("#FlipXContainer #CheckBox.Value", group.flipX);
             commandBuilder.set("#FlipYContainer #CheckBox.Value", group.flipY);
             // Only show hideFrame and collision checkboxes for panels
-            boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(group.blockId)
-                    || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId);
+            boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isPanelBlockId(group.blockId);
             if (isPanel) {
                 commandBuilder.set("#HideFrameContainer.Visible", true);
                 commandBuilder.set("#HideFrameContainer #CheckBox.Value", group.hideFrame);
@@ -77,6 +90,14 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                 commandBuilder.set("#HideFrameContainer.Visible", false);
                 commandBuilder.set("#CollisionContainer.Visible", false);
             }
+            commandBuilder.set("#BannerScaleContainer.Visible", isBanner);
+            commandBuilder.set("#BannerModeContainer.Visible", isBanner);
+            if (isBanner) {
+                double scale = group.bannerScale > 0 ? group.bannerScale : 1.0;
+                commandBuilder.set("#BannerScaleInput.Value", String.valueOf(scale));
+                String mode = group.bannerMode != null ? group.bannerMode : "texture";
+                commandBuilder.set("#BannerModeDropdown.Value", mode);
+            }
         } else {
             // Check if current block is a panel
             if (blockPos != null && world != null) {
@@ -84,23 +105,33 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                     var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
                     if (blockType != null) {
                         String blockId = blockType.getId();
-                        boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)
-                                || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
+                        boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isPanelBlockId(blockId);
+                        boolean isBannerBlock = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isBannerBlockId(blockId);
                         commandBuilder.set("#HideFrameContainer.Visible", isPanel);
                         commandBuilder.set("#CollisionContainer.Visible", isPanel);
+                        commandBuilder.set("#BannerScaleContainer.Visible", isBannerBlock);
+                        commandBuilder.set("#BannerModeContainer.Visible", isBannerBlock);
                         if (isPanel) {
                             commandBuilder.set("#HideFrameContainer #CheckBox.Value",
                                     dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId));
                             commandBuilder.set("#CollisionContainer #CheckBox.Value", true); // Default to collision enabled
                         }
+                        if (isBannerBlock) {
+                            commandBuilder.set("#BannerScaleInput.Value", "1.0");
+                            commandBuilder.set("#BannerModeDropdown.Value", "texture");
+                        }
                     }
                 } catch (Exception ignored) {
                     commandBuilder.set("#HideFrameContainer.Visible", false);
                     commandBuilder.set("#CollisionContainer.Visible", false);
+                    commandBuilder.set("#BannerScaleContainer.Visible", false);
+                    commandBuilder.set("#BannerModeContainer.Visible", false);
                 }
             } else {
                 commandBuilder.set("#HideFrameContainer.Visible", false);
                 commandBuilder.set("#CollisionContainer.Visible", false);
+                commandBuilder.set("#BannerScaleContainer.Visible", false);
+                commandBuilder.set("#BannerModeContainer.Visible", false);
             }
         }
 
@@ -118,6 +149,15 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         if (group == null || group.fit == null || group.fit.isEmpty()) {
             commandBuilder.set("#FitDropdown.Value", "stretch");
         }
+
+        java.util.List<com.hypixel.hytale.server.core.ui.DropdownEntryInfo> bannerModeEntries = new java.util.ArrayList<>();
+        bannerModeEntries.add(new com.hypixel.hytale.server.core.ui.DropdownEntryInfo(
+                com.hypixel.hytale.server.core.ui.LocalizableString.fromMessageId("imageFrames.customUI.bannerModeTexture"),
+                "texture"));
+        bannerModeEntries.add(new com.hypixel.hytale.server.core.ui.DropdownEntryInfo(
+                com.hypixel.hytale.server.core.ui.LocalizableString.fromMessageId("imageFrames.customUI.bannerModeArea"),
+                "area"));
+        commandBuilder.set("#BannerModeDropdown.Entries", bannerModeEntries);
 
         addEventBindings(eventBuilder);
     }
@@ -141,9 +181,13 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
 
         String url = data.url != null ? data.url.trim() : "";
         String fit = data.fit != null && !data.fit.isEmpty() ? data.fit.trim() : "stretch";
+        String bannerModeInput = data.bannerMode != null && !data.bannerMode.isEmpty()
+                ? data.bannerMode.trim()
+                : "texture";
         int rot = parseInt(data.rotation, 0);
         boolean flipX = data.flipX;
         boolean flipY = data.flipY;
+        double bannerScaleInput = Math.max(0.25, Math.min(4.0, parseDouble(data.bannerScale, 1.0)));
 
         if (url.isEmpty()) {
             playerRef.sendMessage(Message.raw("URL is required."));
@@ -159,8 +203,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         try {
             var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
             String blockId = blockType != null ? blockType.getId() : null;
-            if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)
-                    || dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+            if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isPanelLikeBlockId(blockId)) {
                 player.getPageManager().setPage(ref, store, Page.None);
             }
         } catch (Exception ignored) {
@@ -246,19 +289,25 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             // Get hideFrame and collision from UI (for panels)
             boolean hideFrame = false;
             boolean collision = true; // Default to collision enabled
-            if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.PANEL_BLOCK_ID.equals(blockId)) {
+            if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isPanelBlockId(blockId)) {
                 hideFrame = data.hideFrame;
                 collision = data.collision;
             }
             final String finalBlockId = blockId;
             final boolean finalHideFrame = hideFrame;
             final boolean finalCollision = collision;
+            final boolean isBanner = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isBannerBlockId(blockId);
+            final double finalBannerScale = isBanner ? bannerScaleInput : 1.0;
+            final String finalBannerMode = isBanner
+                    ? ("area".equalsIgnoreCase(bannerModeInput) ? "area" : "texture")
+                    : "texture";
             java.util.concurrent.CompletableFuture
                     .supplyAsync(() -> {
                         try {
                             return plugin.getRuntimeManager().buildGroupAssets(info, finalUrl, finalFit, finalRot,
                                     finalFlipX,
-                                    finalFlipY, finalOwnerUuid, facing, finalBlockId, finalHideFrame, finalCollision);
+                                    finalFlipY, finalOwnerUuid, facing, finalBlockId, finalHideFrame, finalCollision,
+                                    finalBannerScale, finalBannerMode);
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
@@ -303,7 +352,9 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                         .append("@FlipX", "#FlipXContainer #CheckBox.Value")
                         .append("@FlipY", "#FlipYContainer #CheckBox.Value")
                         .append("@HideFrame", "#HideFrameContainer #CheckBox.Value")
-                        .append("@Collision", "#CollisionContainer #CheckBox.Value"),
+                        .append("@Collision", "#CollisionContainer #CheckBox.Value")
+                        .append("@BannerScale", "#BannerScaleInput.Value")
+                        .append("@BannerMode", "#BannerModeDropdown.Value"),
                 false);
         eventBuilder.addEventBinding(CustomUIEventBindingType.Activating, "#CancelButton",
                 EventData.of("Action", "Cancel"), false);
@@ -315,6 +366,17 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         }
         try {
             return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private double parseDouble(String text, double fallback) {
+        if (text == null) {
+            return fallback;
+        }
+        try {
+            return Double.parseDouble(text.trim());
         } catch (NumberFormatException e) {
             return fallback;
         }
@@ -367,6 +429,10 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                 .add()
                 .append(new KeyedCodec<>("@Collision", Codec.BOOLEAN), (d, v) -> d.collision = v, d -> d.collision)
                 .add()
+                .append(new KeyedCodec<>("@BannerScale", Codec.STRING), (d, v) -> d.bannerScale = v, d -> d.bannerScale)
+                .add()
+                .append(new KeyedCodec<>("@BannerMode", Codec.STRING), (d, v) -> d.bannerMode = v, d -> d.bannerMode)
+                .add()
                 .build();
 
         public String action;
@@ -377,5 +443,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         public boolean flipY;
         public boolean hideFrame;
         public boolean collision;
+        public String bannerScale;
+        public String bannerMode;
     }
 }

@@ -129,6 +129,8 @@ public class ImageFrameStore extends BlockingDiskFile {
         public String blockId;
         public boolean hideFrame;
         public boolean collision = true; // Default to collision enabled
+        public double bannerScale = 1.0;
+        public String bannerMode = "texture";
         public String normalAxis;
         public Map<String, String> tileBlocks = new HashMap<>();
         public transient Map<String, byte[]> tilePngByPath = new HashMap<>();
@@ -165,13 +167,15 @@ public class ImageFrameStore extends BlockingDiskFile {
                     && flipY == other.flipY
                     && Objects.equals(blockId, other.blockId)
                     && hideFrame == other.hideFrame
+                    && Double.compare(bannerScale, other.bannerScale) == 0
+                    && Objects.equals(bannerMode, other.bannerMode)
                     && Objects.equals(tileBlocks, other.tileBlocks);
         }
 
         @Override
         public int hashCode() {
             return Objects.hash(groupId, worldName, minX, minY, minZ, sizeX, sizeY, sizeZ, ownerUuid, url, fit, rot, flipX, flipY,
-                    blockId, hideFrame, tileBlocks);
+                    blockId, hideFrame, bannerScale, bannerMode, tileBlocks);
         }
     }
 }

@@ -50,6 +50,7 @@ public class ImageFrameRuntimeManager {
     public static final String SLIM_BLOCK_ID = "image_frames:slim_frame";
     public static final String PANEL_BLOCK_ID = "image_frames:panel";
     public static final String PANEL_INVISIBLE_BLOCK_ID = "image_frames:panel_invisible";
+    public static final String BANNER_BLOCK_ID = "image_frames:banner";
     public static final String TILE_PREFIX = "ImageFrames_Tile_";
     private static final String AIR_BLOCK_ID = "empty";
 
@@ -58,9 +59,13 @@ public class ImageFrameRuntimeManager {
     private static final String RUNTIME_BLOCKS_DIR = "Server/Item/Block/Blocks/ImageFramesData";
     private static final String FRAME_TEXTURE_PATH = "Blocks/ImageFrames/Frame.png";
     private static final String PANEL_TEXTURE_PATH = "Blocks/ImageFrames/Panel.png";
+    private static final String BANNER_TEXTURE_PATH = "Blocks/ImageFrames/Banner_Base.png";
+    private static final String BANNER_CUSTOM_TEXTURE_PATH = "Blocks/ImageFrames/Banner_Custom.png";
     private static final String TILE_TEXTURE_DIR = "Blocks/ImageFrames/tiles/";
     private static final String PANEL_MODEL_DIR = "Blocks/ImageFrames/PanelModels/";
     private static final String PANEL_MODEL_PATH = "Blocks/ImageFrames/Panel.blockymodel";
+    private static final String BANNER_MODEL_DIR = "Blocks/ImageFrames/BannerModels/";
+    private static final String BANNER_MODEL_PATH = "Blocks/ImageFrames/Banner.blockymodel";
     private static final AssetUpdateQuery TILE_UPDATE_QUERY = new AssetUpdateQuery(
             new AssetUpdateQuery.RebuildCache(true, false, false, false, false, false));
 
@@ -71,6 +76,8 @@ public class ImageFrameRuntimeManager {
     private final Path runtimeBlockTypesPath;
     private volatile BufferedImage frameTextureCache;
     private volatile BufferedImage panelTextureCache;
+    private volatile BufferedImage bannerTextureCache;
+    private volatile BufferedImage bannerCustomTextureCache;
     private final ImageFrameImageCache imageCache;
     private final AtomicBoolean integrityCheckStarted = new AtomicBoolean(false);
 
@@ -157,12 +164,23 @@ public class ImageFrameRuntimeManager {
         }
     }
 
-    private boolean isFrameBlockId(String blockId) {
+    public static boolean isFrameBlockId(String blockId) {
         return BASE_BLOCK_ID.equals(blockId)
                 || SLIM_BLOCK_ID.equals(blockId)
-                || PANEL_BLOCK_ID.equals(blockId)
-                || PANEL_INVISIBLE_BLOCK_ID.equals(blockId)
+                || isPanelLikeBlockId(blockId)
                 || (blockId != null && blockId.startsWith(TILE_PREFIX));
+    }
+
+    public static boolean isPanelBlockId(String blockId) {
+        return PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
+    }
+
+    public static boolean isBannerBlockId(String blockId) {
+        return BANNER_BLOCK_ID.equals(blockId);
+    }
+
+    public static boolean isPanelLikeBlockId(String blockId) {
+        return isPanelBlockId(blockId) || isBannerBlockId(blockId);
     }
 
     private void dropGroupItems(World world, FrameGroup group, Vector3i pos) {
@@ -177,7 +195,9 @@ public class ImageFrameRuntimeManager {
         if (group.blockId != null) {
             if (SLIM_BLOCK_ID.equals(group.blockId)) {
                 dropItemId = SLIM_BLOCK_ID;
-            } else if (PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
+            } else if (BANNER_BLOCK_ID.equals(group.blockId)) {
+                dropItemId = BANNER_BLOCK_ID;
+            } else if (isPanelBlockId(group.blockId)) {
                 dropItemId = PANEL_BLOCK_ID;
             }
         }
@@ -391,7 +411,8 @@ public class ImageFrameRuntimeManager {
                     String facing = parseFacingFromTileName(baseName);
                     int defaultTileSize = 32;
                     writeStringIfChanged(jsonPath,
-                            buildTileBlockTypeJson(assetPath, normalAxis, facing, BASE_BLOCK_ID, false, null, defaultTileSize, true, false));
+                            buildTileBlockTypeJson(assetPath, normalAxis, facing, BASE_BLOCK_ID, false, null, null,
+                                    defaultTileSize, true, false));
                 } catch (IOException e) {
                     plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to write tile block type %s",
                             tileKey);
@@ -431,7 +452,8 @@ public class ImageFrameRuntimeManager {
     }
 
     public FrameGroup buildGroupAssets(GroupInfo info, String url, String fit, int rot, boolean flipX, boolean flipY,
-            String ownerUuid, String facing, String blockId, boolean hideFrame, boolean collision)
+            String ownerUuid, String facing, String blockId, boolean hideFrame, boolean collision, double bannerScale,
+            String bannerMode)
             throws IOException {
         String groupId = info.worldName + ":" + info.minX + ":" + info.minY + ":" + info.minZ + ":" + info.sizeX + "x"
                 + info.sizeY + "x" + info.sizeZ;
@@ -464,7 +486,7 @@ public class ImageFrameRuntimeManager {
         // For slim frames, don't apply frame underlay - the model handles it separately with multi-texture
         // For panels, build a texture atlas (frame on left, image on right)
         if (!SLIM_BLOCK_ID.equals(blockId)) {
-            if (!PANEL_BLOCK_ID.equals(blockId) && !PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+            if (!isPanelLikeBlockId(blockId)) {
                 // Regular frames: apply frame underlay based on hideFrame
                 processed = applyFrameUnderlay(processed, hideFrame);
             }
@@ -490,13 +512,19 @@ public class ImageFrameRuntimeManager {
         group.blockId = blockId;
         group.hideFrame = hideFrame;
         group.collision = collision;
+        group.bannerScale = bannerScale > 0 ? bannerScale : 1.0;
+        group.bannerMode = bannerMode != null ? bannerMode : "texture";
         group.normalAxis = info.normalAxis != null ? info.normalAxis.name() : null;
         group.tileBlocks.clear();
         String panelModelPath = null;
-        if (PANEL_BLOCK_ID.equals(group.blockId)) {
+        if (isPanelBlockId(group.blockId)) {
             plugin.getLogger().at(Level.INFO).log("Generating panel model for tileSize=%d, hideFrame=%b", tileSize, hideFrame);
             panelModelPath = ensurePanelModel(tileSize, hideFrame);
             plugin.getLogger().at(Level.INFO).log("Panel model path: %s", panelModelPath);
+        }
+        String bannerModelPath = null;
+        if (isBannerBlockId(group.blockId)) {
+            bannerModelPath = ensureBannerModel(tileSize);
         }
 
         for (int ty = 0; ty < info.height; ty++) {
@@ -520,10 +548,13 @@ public class ImageFrameRuntimeManager {
                     gTile.dispose();
                 }
                 // For panels, build texture atlas (frame on left, image on right)
-                if (PANEL_BLOCK_ID.equals(blockId)) {
+                if (isPanelBlockId(blockId)) {
                     boolean includeFrame = !hideFrame;
                     plugin.getLogger().at(Level.FINE).log("Building panel atlas for tile %d,%d with includeFrame=%b (hideFrame=%b)", tx, ty, includeFrame, hideFrame);
                     tile = buildPanelAtlas(tile, includeFrame);
+                } else if (isBannerBlockId(blockId)) {
+                    boolean includeFrame = !hideFrame;
+                    tile = buildBannerAtlas(tile, includeFrame, bannerScale, fit, bannerMode);
                 }
 
                 String tileBaseName = fileGroupId + "_" + tx + "_" + ty;
@@ -541,7 +572,7 @@ public class ImageFrameRuntimeManager {
                 boolean isBottomLeft = (tx == 0 && ty == 0);
                 boolean jsonChanged = writeStringIfChanged(jsonPath,
                         buildTileBlockTypeJson(assetPath, info.normalAxis, facing, group.blockId, group.hideFrame,
-                                panelModelPath, tileSize, group.collision, isBottomLeft));
+                                panelModelPath, bannerModelPath, tileSize, group.collision, isBottomLeft));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
                 }
@@ -578,6 +609,12 @@ public class ImageFrameRuntimeManager {
             group.normalAxis = info.normalAxis.name();
         }
         String fit = group.fit != null ? group.fit : "stretch";
+        if (group.bannerScale <= 0) {
+            group.bannerScale = 1.0;
+        }
+        if (group.bannerMode == null || group.bannerMode.isEmpty()) {
+            group.bannerMode = "texture";
+        }
         int tileSize = plugin.getConfig().getTileSize();
         // Apply fit modes directly to target dimensions (not square first)
         int targetW = info.width * tileSize;
@@ -604,7 +641,7 @@ public class ImageFrameRuntimeManager {
         // For slim frames, don't apply frame underlay - the model handles it separately with multi-texture
         // For panels, build a texture atlas (frame on left, image on right)
         if (!SLIM_BLOCK_ID.equals(group.blockId)) {
-            if (!PANEL_BLOCK_ID.equals(group.blockId) && !PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId)) {
+            if (!isPanelLikeBlockId(group.blockId)) {
                 // Regular frames: apply frame underlay based on hideFrame
                 processed = applyFrameUnderlay(processed, group.hideFrame);
             }
@@ -612,8 +649,12 @@ public class ImageFrameRuntimeManager {
 
         group.tileBlocks.clear();
         String panelModelPath = null;
-        if (PANEL_BLOCK_ID.equals(group.blockId)) {
+        if (isPanelBlockId(group.blockId)) {
             panelModelPath = ensurePanelModel(tileSize, group.hideFrame);
+        }
+        String bannerModelPath = null;
+        if (isBannerBlockId(group.blockId)) {
+            bannerModelPath = ensureBannerModel(tileSize);
         }
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
@@ -636,9 +677,13 @@ public class ImageFrameRuntimeManager {
                     gTile.dispose();
                 }
                 // For panels, build texture atlas (frame on left, image on right)
-                if (PANEL_BLOCK_ID.equals(group.blockId)) {
+                if (isPanelBlockId(group.blockId)) {
                     boolean includeFrame = !group.hideFrame;
                     tile = buildPanelAtlas(tile, includeFrame);
+                } else if (isBannerBlockId(group.blockId)) {
+                    boolean includeFrame = !group.hideFrame;
+                    tile = buildBannerAtlas(tile, includeFrame, group.bannerScale > 0 ? group.bannerScale : 1.0,
+                            fit, group.bannerMode != null ? group.bannerMode : "texture");
                 }
 
                 String tileBaseName = safeId + "_" + tx + "_" + ty;
@@ -657,7 +702,7 @@ public class ImageFrameRuntimeManager {
                 boolean jsonChanged = writeStringIfChanged(jsonPath,
                         buildTileBlockTypeJson(assetPath, forcedAxis != null ? forcedAxis : info.normalAxis,
                                 facing, group.blockId, group.hideFrame,
-                                panelModelPath, tileSize, group.collision, isBottomLeft));
+                                panelModelPath, bannerModelPath, tileSize, group.collision, isBottomLeft));
                 if (jsonChanged || BlockType.getAssetMap().getAsset(tileKey) == null) {
                     blockTypePaths.add(jsonPath);
                 }
@@ -924,7 +969,7 @@ public class ImageFrameRuntimeManager {
     public Map<Vector3i, Integer> readOriginalRotations(World world, GroupInfo info) {
         Map<Vector3i, Integer> rotations = new HashMap<>();
         String blockId = (info.blockId != null && !info.blockId.isEmpty()) ? info.blockId : BASE_BLOCK_ID;
-        boolean isPanel = PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
+        boolean isPanel = isPanelLikeBlockId(blockId);
         if (!isPanel) {
             return rotations;
         }
@@ -949,7 +994,7 @@ public class ImageFrameRuntimeManager {
             return;
         }
         String blockId = (info.blockId != null && !info.blockId.isEmpty()) ? info.blockId : BASE_BLOCK_ID;
-        boolean isPanel = PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
+        boolean isPanel = isPanelLikeBlockId(blockId);
 
         for (Vector3i pos : info.blocks) {
             if (isPanel && rotations != null && rotations.containsKey(pos)) {
@@ -1209,7 +1254,7 @@ public class ImageFrameRuntimeManager {
 
             // Read rotations from current blocks before placing tiles
             Map<Vector3i, Integer> rotations = new HashMap<>();
-            boolean isPanel = PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId);
+            boolean isPanel = isPanelLikeBlockId(group.blockId);
             if (isPanel && info.blocks != null) {
                 for (Vector3i pos : info.blocks) {
                     int rotation = readRotation(world, pos);
@@ -1262,8 +1307,78 @@ public class ImageFrameRuntimeManager {
     }
 
     private String buildTileBlockTypeJson(String texturePath, Axis normalAxis, String facing, String blockId,
-            boolean hideFrame, String panelModelPath, int tileSize, boolean collision, boolean isBottomLeft) {
-        if (PANEL_BLOCK_ID.equals(blockId)) {
+            boolean hideFrame, String panelModelPath, String bannerModelPath, int tileSize, boolean collision,
+            boolean isBottomLeft) {
+        if (isBannerBlockId(blockId)) {
+            String model = bannerModelPath != null ? bannerModelPath : BANNER_MODEL_PATH;
+            StringBuilder json = new StringBuilder();
+            json.append("{\n");
+            if (collision) {
+                json.append("  \"Material\": \"Solid\",\n");
+            } else if (isBottomLeft) {
+                json.append("  \"Material\": \"Empty\",\n");
+            } else {
+                json.append("  \"Material\": \"Solid\",\n");
+            }
+            double scaleFactor = 32.0 / tileSize;
+            json.append("  \"Group\": \"@Tech\",\n")
+                    .append("  \"DrawType\": \"Model\",\n")
+                    .append("  \"Opacity\": \"Transparent\",\n")
+                    .append("  \"CustomModel\": \"").append(model).append("\",\n")
+                    .append("  \"CustomModelScale\": ").append(scaleFactor).append(",\n")
+                    .append("  \"CustomModelTexture\": [\n")
+                    .append("    {\n")
+                    .append("      \"Texture\": \"").append(texturePath).append("\"\n")
+                    .append("    }\n")
+                    .append("  ],\n");
+            json.append("  \"HitboxType\": \"Banner\",\n");
+            if (!collision && isBottomLeft) {
+                json.append("  \"Support\": {\n")
+                        .append("    \"Down\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"North\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"South\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"East\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"West\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ],\n")
+                        .append("    \"Up\": [\n")
+                        .append("      {\n")
+                        .append("        \"FaceType\": \"Full\"\n")
+                        .append("      }\n")
+                        .append("    ]\n")
+                        .append("  },\n");
+            }
+            json.append("  \"VariantRotation\": \"NESW\",\n")
+                    .append("  \"Gathering\": {\n")
+                    .append("    \"Soft\": {\n")
+                    .append("      \"IsWeaponBreakable\": false\n")
+                    .append("    }\n")
+                    .append("  },\n")
+                    .append("  \"BlockParticleSetId\": \"Wood\",\n")
+                    .append("  \"BlockSoundSetId\": \"Cloth\",\n")
+                    .append("  \"ParticleColor\": \"#4c4a31\"\n")
+                    .append("}\n");
+            return json.toString();
+        }
+        if (isPanelBlockId(blockId)) {
             // For panels, use a single atlas texture with UV offsets (frame on left, image on right)
             // Use the panel model (generated with hideFrame parameter)
             String model = panelModelPath;
@@ -1659,7 +1774,7 @@ public class ImageFrameRuntimeManager {
         String safeId = group.safeId != null && !group.safeId.isEmpty() ? group.safeId
                 : sanitizeFilename(group.groupId);
         String facing = group.facing != null ? group.facing : "North";
-        boolean isPanel = PANEL_BLOCK_ID.equals(group.blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(group.blockId);
+        boolean isPanel = isPanelLikeBlockId(group.blockId);
 
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
@@ -1975,6 +2090,199 @@ public class ImageFrameRuntimeManager {
         return atlas;
     }
 
+    private BufferedImage buildBannerAtlas(BufferedImage image, boolean includeFrame, double bannerScale, String fit,
+            String bannerMode) {
+        if (image == null) {
+            return null;
+        }
+        int tileSize = plugin.getConfig().getTileSize();
+        double scale = tileSize / 32.0;
+        int atlasW = (int) Math.round(64 * scale);
+        int atlasH = (int) Math.round(128 * scale);
+        int refW = 64;
+        int refH = 192;
+
+        BufferedImage atlas = new BufferedImage(atlasW, atlasH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = atlas.createGraphics();
+        g.setComposite(java.awt.AlphaComposite.Clear);
+        g.fillRect(0, 0, atlasW, atlasH);
+        g.setComposite(java.awt.AlphaComposite.SrcOver);
+
+        BufferedImage bannerBase = getBannerTexture();
+        BufferedImage scaledBase = bannerBase != null ? resizeNearest(bannerBase, atlasW, atlasH) : null;
+        if (scaledBase != null) {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            g.drawImage(scaledBase, 0, 0, null);
+        }
+
+        BufferedImage bannerCustom = getBannerCustomTexture();
+        BufferedImage scaledCustom = bannerCustom != null ? resizeNearest(bannerCustom, atlasW, atlasH) : null;
+
+        double safeScale = bannerScale > 0 ? bannerScale : 1.0;
+        boolean areaMode = "area".equalsIgnoreCase(bannerMode);
+        int maskMinX = 0;
+        int maskMinY = 0;
+        int maskMaxX = atlasW - 1;
+        int maskMaxY = atlasH - 1;
+        if (scaledCustom != null) {
+            int minX = atlasW;
+            int minY = atlasH;
+            int maxX = -1;
+            int maxY = -1;
+            for (int y = 0; y < atlasH; y++) {
+                for (int x = 0; x < atlasW; x++) {
+                    int mask = scaledCustom.getRGB(x, y);
+                    int maskAlpha = (mask >>> 24) & 0xFF;
+                    if (maskAlpha == 0) {
+                        continue;
+                    }
+                    int r = (mask >>> 16) & 0xFF;
+                    int gCh = (mask >>> 8) & 0xFF;
+                    int b = mask & 0xFF;
+                    if (gCh >= 250 && r <= 5 && b <= 5) {
+                        if (x < minX) {
+                            minX = x;
+                        }
+                        if (y < minY) {
+                            minY = y;
+                        }
+                        if (x > maxX) {
+                            maxX = x;
+                        }
+                        if (y > maxY) {
+                            maxY = y;
+                        }
+                    }
+                }
+            }
+            if (maxX >= minX && maxY >= minY) {
+                maskMinX = minX;
+                maskMinY = minY;
+                maskMaxX = maxX;
+                maskMaxY = maxY;
+            }
+        }
+        int maskW = Math.max(1, maskMaxX - maskMinX + 1);
+        int maskH = Math.max(1, maskMaxY - maskMinY + 1);
+
+        int refAreaW = 64;
+        int refAreaH = 128;
+        int refAreaX1 = 10;
+        int refAreaY1 = 23;
+        int refAreaX2 = 41;
+        int refAreaY2 = 90;
+        int areaX = (int) Math.round(refAreaX1 * (atlasW / (double) refAreaW));
+        int areaY = (int) Math.round(refAreaY1 * (atlasH / (double) refAreaH));
+        int areaEndX = (int) Math.round((refAreaX2 + 1) * (atlasW / (double) refAreaW));
+        int areaEndY = (int) Math.round((refAreaY2 + 1) * (atlasH / (double) refAreaH));
+        int areaW = Math.max(1, areaEndX - areaX);
+        int areaH = Math.max(1, areaEndY - areaY);
+        if (areaX < 0) {
+            areaW += areaX;
+            areaX = 0;
+        }
+        if (areaY < 0) {
+            areaH += areaY;
+            areaY = 0;
+        }
+        if (areaX + areaW > atlasW) {
+            areaW = atlasW - areaX;
+        }
+        if (areaY + areaH > atlasH) {
+            areaH = atlasH - areaY;
+        }
+        areaW = Math.max(1, areaW);
+        areaH = Math.max(1, areaH);
+
+        int selW = areaMode ? areaW : maskW;
+        int selH = areaMode ? areaH : maskH;
+
+        BufferedImage fitted = scaleImage(image, selW, selH, fit);
+        int scaledW = Math.max(1, (int) Math.round(selW * safeScale));
+        int scaledH = Math.max(1, (int) Math.round(selH * safeScale));
+        BufferedImage zoomed = resize(fitted, scaledW, scaledH);
+        BufferedImage scaledImage = new BufferedImage(selW, selH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D gImg = scaledImage.createGraphics();
+        gImg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        gImg.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        int drawX = (selW - scaledW) / 2;
+        int drawY = (selH - scaledH) / 2;
+        gImg.drawImage(zoomed, drawX, drawY, null);
+        gImg.dispose();
+        if (!includeFrame) {
+            scaledImage = cleanAlphaPixels(scaledImage);
+        }
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
+        g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER));
+        if (scaledCustom != null) {
+            for (int y = 0; y < atlasH; y++) {
+                for (int x = 0; x < atlasW; x++) {
+                    int mask = scaledCustom.getRGB(x, y);
+                    int maskAlpha = (mask >>> 24) & 0xFF;
+                    if (maskAlpha == 0) {
+                        continue;
+                    }
+                    int r = (mask >>> 16) & 0xFF;
+                    int gCh = (mask >>> 8) & 0xFF;
+                    int b = mask & 0xFF;
+                    if (gCh >= 250 && r <= 5 && b <= 5) {
+                        int basePixel = scaledBase != null ? scaledBase.getRGB(x, y) : 0x00000000;
+                        int outPixel = basePixel;
+                        if (areaMode) {
+                            if (x >= areaX && x < areaX + areaW && y >= areaY && y < areaY + areaH) {
+                                double u = (x - areaX) / (double) areaW;
+                                double v = (y - areaY) / (double) areaH;
+                                int srcX = (int) Math.round(u * (scaledImage.getWidth() - 1));
+                                int srcY = (int) Math.round(v * (scaledImage.getHeight() - 1));
+                                outPixel = blendOver(basePixel, scaledImage.getRGB(srcX, srcY));
+                            }
+                        } else {
+                            double u = (x - maskMinX) / (double) maskW;
+                            double v = (y - maskMinY) / (double) maskH;
+                            if (u < 0) {
+                                u = 0;
+                            } else if (u > 1) {
+                                u = 1;
+                            }
+                            if (v < 0) {
+                                v = 0;
+                            } else if (v > 1) {
+                                v = 1;
+                            }
+                            int srcX = (int) Math.round(u * (scaledImage.getWidth() - 1));
+                            int srcY = (int) Math.round(v * (scaledImage.getHeight() - 1));
+                            outPixel = blendOver(basePixel, scaledImage.getRGB(srcX, srcY));
+                        }
+                        atlas.setRGB(x, y, outPixel);
+                    }
+                }
+            }
+        } else {
+            if (areaMode) {
+                g.drawImage(scaledImage, areaX, areaY, null);
+            } else {
+                g.drawImage(scaledImage, maskMinX, maskMinY, null);
+            }
+        }
+
+        if (scaledBase != null) {
+            for (int y = 0; y < atlasH; y++) {
+                for (int x = 0; x < atlasW; x++) {
+                    int pixel = atlas.getRGB(x, y);
+                    if (((pixel >>> 24) & 0xFF) == 0) {
+                        atlas.setRGB(x, y, scaledBase.getRGB(x, y));
+                    }
+                }
+            }
+        }
+
+        g.dispose();
+        return atlas;
+    }
+
     private String ensurePanelModel(int tileSize, boolean hideFrame) {
         String suffix = hideFrame ? "_NoFrame" : "";
         String modelAssetPath = PANEL_MODEL_DIR + "Panel_" + tileSize + suffix + ".blockymodel";
@@ -2018,6 +2326,27 @@ public class ImageFrameRuntimeManager {
                 }
             }
             return PANEL_MODEL_PATH;
+        }
+    }
+
+    private String ensureBannerModel(int tileSize) {
+        String modelAssetPath = BANNER_MODEL_DIR + "Banner_" + tileSize + ".blockymodel";
+        Path filePath = runtimeAssetsPath.resolve("Common").resolve(modelAssetPath);
+        try {
+            String json = buildBannerModelJson(tileSize);
+            byte[] bytes = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            boolean changed = writeBytesIfChanged(filePath, bytes);
+            boolean hasAsset = CommonAssetRegistry.hasCommonAsset(modelAssetPath);
+            if (changed || !hasAsset) {
+                registerCommonAsset(modelAssetPath, filePath, bytes);
+                plugin.getLogger().at(Level.INFO).log("Generated banner model: %s (changed=%b, hadAsset=%b)", modelAssetPath, changed, hasAsset);
+            } else {
+                plugin.getLogger().at(Level.FINE).log("Banner model already exists: %s", modelAssetPath);
+            }
+            return modelAssetPath;
+        } catch (Exception e) {
+            plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to write banner model for tileSize=%d", tileSize);
+            return BANNER_MODEL_PATH;
         }
     }
 
@@ -2159,6 +2488,158 @@ public class ImageFrameRuntimeManager {
         return json.toString();
     }
 
+    private String buildBannerModelJson(int tileSize) {
+        double scale = tileSize / 32.0;
+        java.util.function.Function<Double, Integer> s = v -> (int) Math.round(v * scale);
+
+        StringBuilder json = new StringBuilder();
+        json.append("{\n")
+                .append("  \"nodes\": [\n")
+                .append("    {\n")
+                .append("      \"id\": \"1\",\n")
+                .append("      \"name\": \"Beam\",\n")
+                .append("      \"position\": {\"x\": 0, \"y\": ").append(s.apply(16.0)).append(", \"z\": 0},\n")
+                .append("      \"orientation\": {\"x\": 0, \"y\": 0, \"z\": 0, \"w\": 1},\n")
+                .append("      \"shape\": {\n")
+                .append("        \"type\": \"box\",\n")
+                .append("        \"offset\": {\"x\": 0, \"y\": 0, \"z\": 0},\n")
+                .append("        \"stretch\": {\"x\": 1, \"y\": 1, \"z\": 1},\n")
+                .append("        \"settings\": {\n")
+                .append("          \"isPiece\": false,\n")
+                .append("          \"size\": {\"x\": ").append(s.apply(40.0)).append(", \"y\": ").append(s.apply(6.0)).append(", \"z\": ").append(s.apply(6.0)).append("}\n")
+                .append("        },\n")
+                .append("        \"textureLayout\": {\n")
+                .append("          \"back\": {\n")
+                .append("            \"offset\": {\"x\": ").append(s.apply(6.0)).append(", \"y\": ").append(s.apply(6.0)).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"right\": {\n")
+                .append("            \"offset\": {\"x\": ").append(s.apply(0.0)).append(", \"y\": ").append(s.apply(6.0)).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"front\": {\n")
+                .append("            \"offset\": {\"x\": ").append(s.apply(6.0)).append(", \"y\": ").append(s.apply(6.0)).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"left\": {\n")
+                .append("            \"offset\": {\"x\": ").append(s.apply(0.0)).append(", \"y\": ").append(s.apply(6.0)).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"top\": {\n")
+                .append("            \"offset\": {\"x\": ").append(s.apply(6.0)).append(", \"y\": ").append(s.apply(0.0)).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          },\n")
+                .append("          \"bottom\": {\n")
+                .append("            \"offset\": {\"x\": ").append(s.apply(6.0)).append(", \"y\": ").append(s.apply(12.0)).append("},\n")
+                .append("            \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("            \"angle\": 0\n")
+                .append("          }\n")
+                .append("        },\n")
+                .append("        \"unwrapMode\": \"custom\",\n")
+                .append("        \"visible\": true,\n")
+                .append("        \"doubleSided\": false,\n")
+                .append("        \"shadingMode\": \"standard\"\n")
+                .append("      },\n")
+                .append("      \"children\": [\n")
+                .append("        {\n")
+                .append("          \"id\": \"2\",\n")
+                .append("          \"name\": \"Cloth\",\n")
+                .append("          \"position\": {\"x\": 0, \"y\": ").append(s.apply(-1.0)).append(", \"z\": 0},\n")
+                .append("          \"orientation\": {\"x\": 0, \"y\": 0, \"z\": 0, \"w\": 1},\n")
+                .append("          \"shape\": {\n")
+                .append("            \"type\": \"quad\",\n")
+                .append("            \"offset\": {\"x\": 0, \"y\": ").append(s.apply(-18.0)).append(", \"z\": 0},\n")
+                .append("            \"stretch\": {\"x\": 1, \"y\": 1, \"z\": 1},\n")
+                .append("            \"settings\": {\n")
+                .append("              \"isPiece\": false,\n")
+                .append("              \"size\": {\"x\": ").append(s.apply(32.0)).append(", \"y\": ").append(s.apply(36.0)).append("},\n")
+                .append("              \"normal\": \"+Z\"\n")
+                .append("            },\n")
+                .append("            \"textureLayout\": {\n")
+                .append("              \"front\": {\n")
+                .append("                \"offset\": {\"x\": ").append(s.apply(10.0)).append(", \"y\": ").append(s.apply(18.0)).append("},\n")
+                .append("                \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("                \"angle\": 0\n")
+                .append("              }\n")
+                .append("            },\n")
+                .append("            \"unwrapMode\": \"custom\",\n")
+                .append("            \"visible\": true,\n")
+                .append("            \"doubleSided\": true,\n")
+                .append("            \"shadingMode\": \"standard\"\n")
+                .append("          },\n")
+                .append("          \"children\": [\n")
+                .append("            {\n")
+                .append("              \"id\": \"3\",\n")
+                .append("              \"name\": \"Cloth2\",\n")
+                .append("              \"position\": {\"x\": 0, \"y\": ").append(s.apply(-18.0)).append(", \"z\": 0},\n")
+                .append("              \"orientation\": {\"x\": 0, \"y\": 0, \"z\": 0, \"w\": 1},\n")
+                .append("              \"shape\": {\n")
+                .append("                \"type\": \"quad\",\n")
+                .append("                \"offset\": {\"x\": 0, \"y\": ").append(s.apply(-15.5)).append(", \"z\": 0},\n")
+                .append("                \"stretch\": {\"x\": 1, \"y\": 1, \"z\": 1},\n")
+                .append("                \"settings\": {\n")
+                .append("                  \"isPiece\": false,\n")
+                .append("                  \"size\": {\"x\": ").append(s.apply(32.0)).append(", \"y\": ").append(s.apply(31.0)).append("},\n")
+                .append("                  \"normal\": \"+Z\"\n")
+                .append("                },\n")
+                .append("                \"textureLayout\": {\n")
+                .append("                  \"front\": {\n")
+                .append("                    \"offset\": {\"x\": ").append(s.apply(10.0)).append(", \"y\": ").append(s.apply(54.0)).append("},\n")
+                .append("                    \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("                    \"angle\": 0\n")
+                .append("                  }\n")
+                .append("                },\n")
+                .append("                \"unwrapMode\": \"custom\",\n")
+                .append("                \"visible\": true,\n")
+                .append("                \"doubleSided\": true,\n")
+                .append("                \"shadingMode\": \"standard\"\n")
+                .append("              },\n")
+                .append("              \"children\": [\n")
+                .append("                {\n")
+                .append("                  \"id\": \"4\",\n")
+                .append("                  \"name\": \"Cloth3\",\n")
+                .append("                  \"position\": {\"x\": 0, \"y\": ").append(s.apply(-15.5)).append(", \"z\": 0},\n")
+                .append("                  \"orientation\": {\"x\": 0, \"y\": 0, \"z\": 0, \"w\": 1},\n")
+                .append("                  \"shape\": {\n")
+                .append("                    \"type\": \"quad\",\n")
+                .append("                    \"offset\": {\"x\": 0, \"y\": ").append(s.apply(-16.0)).append(", \"z\": 0},\n")
+                .append("                    \"stretch\": {\"x\": 1, \"y\": 1, \"z\": 1},\n")
+                .append("                    \"settings\": {\n")
+                .append("                      \"isPiece\": false,\n")
+                .append("                      \"size\": {\"x\": ").append(s.apply(32.0)).append(", \"y\": ").append(s.apply(32.0)).append("},\n")
+                .append("                      \"normal\": \"+Z\"\n")
+                .append("                    },\n")
+                .append("                    \"textureLayout\": {\n")
+                .append("                      \"front\": {\n")
+                .append("                        \"offset\": {\"x\": ").append(s.apply(10.0)).append(", \"y\": ").append(s.apply(85.0)).append("},\n")
+                .append("                        \"mirror\": {\"x\": false, \"y\": false},\n")
+                .append("                        \"angle\": 0\n")
+                .append("                      }\n")
+                .append("                    },\n")
+                .append("                    \"unwrapMode\": \"custom\",\n")
+                .append("                    \"visible\": true,\n")
+                .append("                    \"doubleSided\": true,\n")
+                .append("                    \"shadingMode\": \"standard\"\n")
+                .append("                  }\n")
+                .append("                }\n")
+                .append("              ]\n")
+                .append("            }\n")
+                .append("          ]\n")
+                .append("        }\n")
+                .append("      ]\n")
+                .append("    }\n")
+                .append("  ],\n")
+                .append("  \"format\": \"prop\",\n")
+                .append("  \"lod\": \"auto\"\n")
+                .append("}\n");
+        return json.toString();
+    }
+
     private BufferedImage getPanelTexture() {
         BufferedImage cached = panelTextureCache;
         if (cached != null) {
@@ -2190,6 +2671,68 @@ public class ImageFrameRuntimeManager {
         }
     }
 
+    private BufferedImage getBannerTexture() {
+        BufferedImage cached = bannerTextureCache;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (this) {
+            if (bannerTextureCache != null) {
+                return bannerTextureCache;
+            }
+            BufferedImage loaded = null;
+            try (InputStream in = ImageFramesPlugin.class.getClassLoader()
+                    .getResourceAsStream("Common/" + BANNER_TEXTURE_PATH)) {
+                if (in != null) {
+                    loaded = ImageIO.read(in);
+                }
+            } catch (IOException ignored) {
+            }
+            if (loaded == null) {
+                Path fallback = Paths.get("src/main/resources/Common").resolve(BANNER_TEXTURE_PATH);
+                if (Files.exists(fallback)) {
+                    try {
+                        loaded = ImageIO.read(fallback.toFile());
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+            bannerTextureCache = loaded;
+            return loaded;
+        }
+    }
+
+    private BufferedImage getBannerCustomTexture() {
+        BufferedImage cached = bannerCustomTextureCache;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (this) {
+            if (bannerCustomTextureCache != null) {
+                return bannerCustomTextureCache;
+            }
+            BufferedImage loaded = null;
+            try (InputStream in = ImageFramesPlugin.class.getClassLoader()
+                    .getResourceAsStream("Common/" + BANNER_CUSTOM_TEXTURE_PATH)) {
+                if (in != null) {
+                    loaded = ImageIO.read(in);
+                }
+            } catch (IOException ignored) {
+            }
+            if (loaded == null) {
+                Path fallback = Paths.get("src/main/resources/Common").resolve(BANNER_CUSTOM_TEXTURE_PATH);
+                if (Files.exists(fallback)) {
+                    try {
+                        loaded = ImageIO.read(fallback.toFile());
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+            bannerCustomTextureCache = loaded;
+            return loaded;
+        }
+    }
+
     private static BufferedImage cleanAlphaPixels(BufferedImage src) {
         // Remove or blend alpha pixels to prevent artifacts on invisible frames
         // Make pixels with low alpha fully transparent
@@ -2207,6 +2750,32 @@ public class ImageFrameRuntimeManager {
             }
         }
         return cleaned;
+    }
+
+    private static int blendOver(int base, int overlay) {
+        int oa = (overlay >>> 24) & 0xFF;
+        if (oa == 255) {
+            return overlay;
+        }
+        if (oa == 0) {
+            return base;
+        }
+        int ba = (base >>> 24) & 0xFF;
+        int invOa = 255 - oa;
+        int outA = oa + (ba * invOa + 127) / 255;
+        if (outA == 0) {
+            return 0;
+        }
+        int or = (overlay >>> 16) & 0xFF;
+        int og = (overlay >>> 8) & 0xFF;
+        int ob = overlay & 0xFF;
+        int br = (base >>> 16) & 0xFF;
+        int bg = (base >>> 8) & 0xFF;
+        int bb = base & 0xFF;
+        int outR = (or * oa + (br * ba * invOa + 127) / 255 + outA / 2) / outA;
+        int outG = (og * oa + (bg * ba * invOa + 127) / 255 + outA / 2) / outA;
+        int outB = (ob * oa + (bb * ba * invOa + 127) / 255 + outA / 2) / outA;
+        return (outA << 24) | (outR << 16) | (outG << 8) | outB;
     }
 
     private static BufferedImage resizeNearest(BufferedImage src, int w, int h) {
@@ -2359,7 +2928,7 @@ public class ImageFrameRuntimeManager {
     private GroupInfo collectGroup(World world, Vector3i start, Axis preferredNormal) {
         String worldName = world.getName();
         String startBlockId = world.getBlockType(start).getId();
-        boolean panelsOnly = isPanelBlockId(startBlockId);
+        boolean panelsOnly = isPanelLikeBlockId(startBlockId);
         Set<String> visited = new HashSet<>();
         ArrayDeque<Vector3i> queue = new ArrayDeque<>();
         queue.add(start);
@@ -2381,11 +2950,11 @@ public class ImageFrameRuntimeManager {
             }
             String blockId = world.getBlockType(pos).getId();
             if (panelsOnly) {
-                if (!isPanelBlockId(blockId)) {
+                if (!isPanelLikeBlockId(blockId)) {
                     continue;
                 }
             } else if (!BASE_BLOCK_ID.equals(blockId) && !SLIM_BLOCK_ID.equals(blockId)
-                    && !PANEL_BLOCK_ID.equals(blockId) && !PANEL_INVISIBLE_BLOCK_ID.equals(blockId)) {
+                    && !isPanelLikeBlockId(blockId)) {
                 continue;
             }
             blocks.add(pos);
@@ -2461,10 +3030,6 @@ public class ImageFrameRuntimeManager {
         int expected = info.width * info.height;
         info.valid = (info.sizeX == 1 || info.sizeY == 1 || info.sizeZ == 1) && blocks.size() == expected;
         return info;
-    }
-
-    private boolean isPanelBlockId(String blockId) {
-        return PANEL_BLOCK_ID.equals(blockId) || PANEL_INVISIBLE_BLOCK_ID.equals(blockId);
     }
 
     private Axis axisFromFacing(String facing) {

@@ -1,0 +1,70 @@
+{
+  "TranslationProperties": {
+    "Name": "imageFrames.item.banner.name",
+    "Description": "imageFrames.item.banner.description"
+  },
+  "Category": "Blocks",
+  "ItemLevel": 1,
+  "MaxStack": 64,
+  "Icon": "Icons/ItemsGenerated/ImageFrames/Banner.png",
+  "BlockType": {
+    "Material": "Solid",
+    "DrawType": "Model",
+    "Opacity": "Transparent",
+    "CustomModel": "Blocks/ImageFrames/Banner.blockymodel",
+    "CustomModelTexture": [
+      {
+        "Texture": "Blocks/ImageFrames/Banner_Base.png"
+      },
+      {
+        "Texture": "Blocks/ImageFrames/Banner_Base.png"
+      }
+    ],
+    "HitboxType": "Banner",
+    "VariantRotation": "NESW",
+    "Gathering": {
+      "Soft": {
+        "IsWeaponBreakable": false
+      }
+    },
+    "BlockParticleSetId": "Wood",
+    "BlockSoundSetId": "Cloth",
+    "Flags": {
+      "IsUsable": true
+    },
+    "Interactions": {
+      "Use": "ImageFrames_Use"
+    },
+    "ParticleColor": "#4c4a31"
+  },
+  "PlayerAnimationsId": "Block",
+  "ItemSoundSetId": "ISS_Items_Cloth",
+  "Interactions": {
+    "Primary": "Block_Primary",
+    "Secondary": "Block_Secondary"
+  },
+  "Recipe": {
+    "TimeSeconds": 7,
+    "Input": [
+      {
+        "ItemId": "Ingredient_Life_Essence",
+        "Quantity": 30
+      },
+      {
+        "ResourceTypeId": "Wood_Trunk",
+        "Quantity": 9
+      }
+    ],
+    "BenchRequirement": [
+      {
+        "Type": "Crafting",
+        "Id": "Furniture_Bench",
+        "Categories": ["Furniture_Misc"]
+      }
+    ],
+    "OutputQuantity": 18
+  },
+  "Tags": {
+    "Type": ["Block"]
+  }
+}
