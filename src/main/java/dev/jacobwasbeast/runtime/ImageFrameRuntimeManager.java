@@ -78,6 +78,7 @@ public class ImageFrameRuntimeManager {
     private volatile BufferedImage panelTextureCache;
     private volatile BufferedImage bannerTextureCache;
     private volatile BufferedImage bannerCustomTextureCache;
+    private volatile Double bannerMaskAspectCache;
     private final ImageFrameImageCache imageCache;
     private final AtomicBoolean integrityCheckStarted = new AtomicBoolean(false);
 
@@ -461,9 +462,15 @@ public class ImageFrameRuntimeManager {
 
         BufferedImage source = loadSourceImage(url);
         int tileSize = plugin.getConfig().getTileSize();
+        boolean isBanner = isBannerBlockId(blockId);
+        int tileHeight = tileSize;
+        if (isBanner) {
+            double aspect = getBannerMaskAspect();
+            tileHeight = Math.max(1, (int) Math.round(tileSize * aspect));
+        }
         // Apply fit modes directly to target dimensions (not square first)
         int targetW = info.width * tileSize;
-        int targetH = info.height * tileSize;
+        int targetH = info.height * tileHeight;
         BufferedImage processed = scaleImage(source, targetW, targetH, fit);
         if (rot != 0) {
             processed = rotate(processed, rot);
@@ -530,16 +537,16 @@ public class ImageFrameRuntimeManager {
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 int px = tx * tileSize;
-                int py = ty * tileSize;
+                int py = ty * tileHeight;
                 // Ensure we don't go out of bounds
                 int availableW = Math.min(tileSize, processed.getWidth() - px);
-                int availableH = Math.min(tileSize, processed.getHeight() - py);
+                int availableH = Math.min(tileHeight, processed.getHeight() - py);
                 BufferedImage tile;
-                if (availableW == tileSize && availableH == tileSize) {
-                    tile = processed.getSubimage(px, py, tileSize, tileSize);
+                if (availableW == tileSize && availableH == tileHeight) {
+                    tile = processed.getSubimage(px, py, tileSize, tileHeight);
                 } else {
                     // Pad to square if needed
-                    tile = new BufferedImage(tileSize, tileSize, BufferedImage.TYPE_INT_ARGB);
+                    tile = new BufferedImage(tileSize, tileHeight, BufferedImage.TYPE_INT_ARGB);
                     Graphics2D gTile = tile.createGraphics();
                     gTile.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
                     gTile.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
@@ -616,9 +623,14 @@ public class ImageFrameRuntimeManager {
             group.bannerMode = "texture";
         }
         int tileSize = plugin.getConfig().getTileSize();
+        int tileHeight = tileSize;
+        if (isBannerBlockId(group.blockId)) {
+            double aspect = getBannerMaskAspect();
+            tileHeight = Math.max(1, (int) Math.round(tileSize * aspect));
+        }
         // Apply fit modes directly to target dimensions (not square first)
         int targetW = info.width * tileSize;
-        int targetH = info.height * tileSize;
+        int targetH = info.height * tileHeight;
         BufferedImage processed = scaleImage(source, targetW, targetH, fit);
         if (group.rot != 0) {
             processed = rotate(processed, group.rot);
@@ -659,16 +671,16 @@ public class ImageFrameRuntimeManager {
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 int px = tx * tileSize;
-                int py = ty * tileSize;
+                int py = ty * tileHeight;
                 // Ensure we don't go out of bounds
                 int availableW = Math.min(tileSize, processed.getWidth() - px);
-                int availableH = Math.min(tileSize, processed.getHeight() - py);
+                int availableH = Math.min(tileHeight, processed.getHeight() - py);
                 BufferedImage tile;
-                if (availableW == tileSize && availableH == tileSize) {
-                    tile = processed.getSubimage(px, py, tileSize, tileSize);
+                if (availableW == tileSize && availableH == tileHeight) {
+                    tile = processed.getSubimage(px, py, tileSize, tileHeight);
                 } else {
                     // Pad to square if needed
-                    tile = new BufferedImage(tileSize, tileSize, BufferedImage.TYPE_INT_ARGB);
+                    tile = new BufferedImage(tileSize, tileHeight, BufferedImage.TYPE_INT_ARGB);
                     Graphics2D gTile = tile.createGraphics();
                     gTile.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
                     gTile.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
@@ -2731,6 +2743,58 @@ public class ImageFrameRuntimeManager {
             bannerCustomTextureCache = loaded;
             return loaded;
         }
+    }
+
+    private double getBannerMaskAspect() {
+        Double cached = bannerMaskAspectCache;
+        if (cached != null) {
+            return cached;
+        }
+        BufferedImage custom = getBannerCustomTexture();
+        if (custom == null) {
+            bannerMaskAspectCache = 2.0;
+            return 2.0;
+        }
+        int w = custom.getWidth();
+        int h = custom.getHeight();
+        int minX = w;
+        int minY = h;
+        int maxX = -1;
+        int maxY = -1;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int mask = custom.getRGB(x, y);
+                int a = (mask >>> 24) & 0xFF;
+                if (a == 0) {
+                    continue;
+                }
+                int r = (mask >>> 16) & 0xFF;
+                int g = (mask >>> 8) & 0xFF;
+                int b = mask & 0xFF;
+                if (g >= 250 && r <= 5 && b <= 5) {
+                    if (x < minX) {
+                        minX = x;
+                    }
+                    if (y < minY) {
+                        minY = y;
+                    }
+                    if (x > maxX) {
+                        maxX = x;
+                    }
+                    if (y > maxY) {
+                        maxY = y;
+                    }
+                }
+            }
+        }
+        if (maxX < minX || maxY < minY) {
+            double fallback = h / (double) Math.max(1, w);
+            bannerMaskAspectCache = fallback;
+            return fallback;
+        }
+        double aspect = (maxY - minY + 1) / (double) Math.max(1, (maxX - minX + 1));
+        bannerMaskAspectCache = aspect;
+        return aspect;
     }
 
     private static BufferedImage cleanAlphaPixels(BufferedImage src) {
