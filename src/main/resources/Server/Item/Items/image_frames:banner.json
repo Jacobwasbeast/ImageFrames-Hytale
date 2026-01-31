@@ -48,11 +48,15 @@
     "Input": [
       {
         "ItemId": "Ingredient_Life_Essence",
-        "Quantity": 30
+        "Quantity": 10
       },
       {
         "ResourceTypeId": "Wood_Trunk",
-        "Quantity": 9
+        "Quantity": 3
+      },
+      {
+        "ResourceTypeId": "Rubble",
+        "Quantity": 7
       }
     ],
     "BenchRequirement": [
@@ -62,7 +66,7 @@
         "Categories": ["Furniture_Misc"]
       }
     ],
-    "OutputQuantity": 18
+    "OutputQuantity": 1
   },
   "Tags": {
     "Type": ["Block"]
