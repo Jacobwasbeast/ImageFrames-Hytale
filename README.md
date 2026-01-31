@@ -12,6 +12,7 @@ ImageFrames is a Hytale mod that facilitates the display of custom images on blo
 *   **Owner Locking**: Prevents other players from modifying your frames (configurable).
 *   **Interactive UI**: Easy-to-use configuration menu when interacting with frame blocks.
 *   **Panels**: Flat panels with optional hidden frame and togglable collision.
+*   **Banners**: Placeable banners with adjustable scale and display mode.
 
 ## Usage
 
@@ -23,6 +24,7 @@ ImageFrames is a Hytale mod that facilitates the display of custom images on blo
     *   **Rotation**: Rotate the image if needed.
     *   **Flip**: Flip horizontally or vertically.
     *   **Panels**: Toggle **Hide Frame** and **Collision** (panels only).
+    *   **Banners**: Set **Banner Scale** (0.25 - 4.0) and **Banner Mode** (**Texture** or **Area**).
 4.  **Apply**: Click "Apply" to render the image.
 
 ### Resetting Frames
@@ -61,6 +63,12 @@ You can craft Image Frames and Panels at a **Furniture Bench**.
 </div>
 
 <div align="center">
+  <img src="Screenshots/BannerUI.png" alt="Banner UI Configuration" width="600"/>
+  <br>
+  <em>Banner Configuration Interface</em>
+</div>
+
+<div align="center">
   <img src="Screenshots/Panel UI.png" alt="Panel UI Configuration" width="600"/>
   <br>
   <em>Panel Configuration Interface</em>
@@ -76,6 +84,18 @@ You can craft Image Frames and Panels at a **Furniture Bench**.
   <img src="Screenshots/Panels.png" alt="Panels" width="600"/>
   <br>
   <em>Panels</em>
+</div>
+
+<div align="center">
+  <img src="Screenshots/Banner.png" alt="Banner" width="600"/>
+  <br>
+  <em>Banner</em>
+</div>
+
+<div align="center">
+  <img src="Screenshots/BannerHeld.png" alt="Banner Held" width="600"/>
+  <br>
+  <em>Banner Held</em>
 </div>
 
 <div align="center">
