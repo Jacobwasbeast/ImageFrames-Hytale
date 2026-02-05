@@ -8,7 +8,7 @@ import com.hypixel.hytale.math.vector.Vector3i;
 import com.hypixel.hytale.math.vector.Vector4d;
 import com.hypixel.hytale.server.core.asset.AssetModule;
 import com.hypixel.hytale.assetstore.AssetUpdateQuery;
-import com.hypixel.hytale.server.core.asset.common.CommonAssetModule;
+import com.hypixel.hytale.server.core.asset.common.CommonAsset;
 import com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry;
 import com.hypixel.hytale.server.core.asset.common.asset.FileCommonAsset;
 import com.hypixel.hytale.protocol.Packet;
@@ -20,6 +20,7 @@ import com.hypixel.hytale.server.core.universe.world.World;
 import dev.jacobwasbeast.ImageFramesPlugin;
 import dev.jacobwasbeast.store.ImageFrameStore;
 import dev.jacobwasbeast.store.ImageFrameStore.FrameGroup;
+import dev.jacobwasbeast.util.CommonAssetUtil;
 import it.unimi.dsi.fastutil.booleans.BooleanObjectPair;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
@@ -33,14 +34,7 @@ import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayDeque;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import javax.imageio.ImageIO;
@@ -265,6 +259,7 @@ public class ImageFrameRuntimeManager {
 
         List<Path> removeJsonPaths = new ArrayList<>();
         List<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removedCommon = new ArrayList<>();
+        List<CommonAsset> updatedCommon = new ArrayList<>();
 
         if (Files.isDirectory(runtimeCommonBlocksPath)) {
             try (var stream = Files.list(runtimeCommonBlocksPath)) {
@@ -278,7 +273,11 @@ public class ImageFrameRuntimeManager {
                     BooleanObjectPair<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removed = CommonAssetRegistry
                             .removeCommonAssetByName(RUNTIME_ASSETS_PACK, assetPath);
                     if (removed != null && removed.second() != null) {
-                        removedCommon.add(removed.second());
+                        if (removed.firstBoolean()) {
+                            updatedCommon.add(removed.second().asset());
+                        } else {
+                            removedCommon.add(removed.second());
+                        }
                     }
                     try {
                         Files.deleteIfExists(path);
@@ -310,11 +309,11 @@ public class ImageFrameRuntimeManager {
             }
         }
 
+        if (!updatedCommon.isEmpty()) {
+            CommonAssetUtil.sendCommonAssetsSilentBatch(updatedCommon);
+        }
         if (!removedCommon.isEmpty()) {
-            CommonAssetModule module = CommonAssetModule.get();
-            if (module != null) {
-                module.sendRemoveAssets(removedCommon, false);
-            }
+            CommonAssetUtil.removeCommonAssetsSilentBatch(removedCommon);
         }
     }
 
@@ -343,27 +342,33 @@ public class ImageFrameRuntimeManager {
     }
 
     private void ensureCommonAssetsRegistered() {
-        CommonAssetModule commonAssetModule = CommonAssetModule.get();
-        if (commonAssetModule == null || !Files.isDirectory(runtimeCommonBlocksPath)) {
+        if (!Files.isDirectory(runtimeCommonBlocksPath)) {
             return;
         }
+        List<CommonAsset> toRegister = new ArrayList<>();
         try (var stream = Files.list(runtimeCommonBlocksPath)) {
-            stream.filter(p -> p.getFileName().toString().toLowerCase().endsWith(".png")).forEach(path -> {
+            for (Path path : (Iterable<Path>) stream::iterator) {
+                if (!path.getFileName().toString().toLowerCase().endsWith(".png")) {
+                    continue;
+                }
                 String fileName = path.getFileName().toString();
                 String assetPath = "Blocks/ImageFrames/tiles/" + fileName;
                 if (CommonAssetRegistry.hasCommonAsset(assetPath)) {
-                    return;
+                    continue;
                 }
                 try {
                     byte[] bytes = Files.readAllBytes(path);
-                    commonAssetModule.addCommonAsset(RUNTIME_ASSETS_PACK, new FileCommonAsset(path, assetPath, bytes));
+                    toRegister.add(new FileCommonAsset(path, assetPath, bytes));
                 } catch (IOException e) {
                     plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to register tile asset %s",
                             assetPath);
                 }
-            });
+            }
         } catch (IOException e) {
             plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to scan tile assets");
+        }
+        if (!toRegister.isEmpty()) {
+            CommonAssetUtil.addCommonAssetsSilentBatch(RUNTIME_ASSETS_PACK, toRegister, false, false);
         }
     }
 
@@ -533,6 +538,7 @@ public class ImageFrameRuntimeManager {
         if (isBannerBlockId(group.blockId)) {
             bannerModelPath = ensureBannerModel(tileSize);
         }
+        List<CommonAsset> assetsToRegister = new ArrayList<>();
 
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
@@ -572,7 +578,7 @@ public class ImageFrameRuntimeManager {
                 boolean pngChanged = writeBytesIfChanged(filePath, pngBytes);
                 boolean hasAsset = CommonAssetRegistry.hasCommonAsset(assetPath);
                 if (pngChanged || !hasAsset) {
-                    registerCommonAsset(assetPath, filePath, pngBytes);
+                    assetsToRegister.add(new FileCommonAsset(filePath, assetPath, pngBytes));
                 }
                 Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
                 // Bottom-left tile is at tx=0, ty=0
@@ -589,6 +595,9 @@ public class ImageFrameRuntimeManager {
                         ImageFrameStore.toPosKey(info.worldName, pos.getX(), pos.getY(), pos.getZ()),
                         tileKey);
             }
+        }
+        if (!assetsToRegister.isEmpty()) {
+            CommonAssetUtil.addCommonAssetsSilentBatch(RUNTIME_ASSETS_PACK, assetsToRegister, false);
         }
         loadBlockTypeAssets(blockTypePaths);
         return group;
@@ -668,6 +677,7 @@ public class ImageFrameRuntimeManager {
         if (isBannerBlockId(group.blockId)) {
             bannerModelPath = ensureBannerModel(tileSize);
         }
+        List<CommonAsset> assetsToRegister = new ArrayList<>();
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 int px = tx * tileSize;
@@ -706,7 +716,7 @@ public class ImageFrameRuntimeManager {
                 boolean pngChanged = writeBytesIfChanged(filePath, pngBytes);
                 boolean hasAsset = CommonAssetRegistry.hasCommonAsset(assetPath);
                 if (pngChanged || !hasAsset) {
-                    registerCommonAsset(assetPath, filePath, pngBytes);
+                    assetsToRegister.add(new FileCommonAsset(filePath, assetPath, pngBytes));
                 }
                 Path jsonPath = runtimeBlockTypesPath.resolve(tileKey + ".json");
                 // Bottom-left tile is at tx=0, ty=0
@@ -722,6 +732,9 @@ public class ImageFrameRuntimeManager {
                 group.tileBlocks.put(ImageFrameStore.toPosKey(info.worldName, pos.getX(), pos.getY(), pos.getZ()),
                         tileKey);
             }
+        }
+        if (!assetsToRegister.isEmpty()) {
+            CommonAssetUtil.addCommonAssetsSilentBatch(RUNTIME_ASSETS_PACK, assetsToRegister, false);
         }
     }
 
@@ -835,6 +848,7 @@ public class ImageFrameRuntimeManager {
                 group.sizeX, group.sizeY, group.sizeZ, java.util.Collections.emptyList(), null, group.blockId);
         List<Path> jsonPaths = new ArrayList<>();
         List<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removedCommon = new ArrayList<>();
+        List<CommonAsset> updatedCommon = new ArrayList<>();
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 String baseName = safeId + "_" + tx + "_" + ty;
@@ -848,7 +862,11 @@ public class ImageFrameRuntimeManager {
                 BooleanObjectPair<com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry.PackAsset> removed = CommonAssetRegistry
                         .removeCommonAssetByName(RUNTIME_ASSETS_PACK, assetPath);
                 if (removed != null && removed.second() != null) {
-                    removedCommon.add(removed.second());
+                    if (removed.firstBoolean()) {
+                        updatedCommon.add(removed.second().asset());
+                    } else {
+                        removedCommon.add(removed.second());
+                    }
                 }
                 try {
                     Files.deleteIfExists(pngPath);
@@ -873,11 +891,11 @@ public class ImageFrameRuntimeManager {
                 plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to remove ImageFrames block types");
             }
         }
+        if (!updatedCommon.isEmpty()) {
+            CommonAssetUtil.sendCommonAssetsSilentBatch(updatedCommon);
+        }
         if (!removedCommon.isEmpty()) {
-            CommonAssetModule module = CommonAssetModule.get();
-            if (module != null) {
-                module.sendRemoveAssets(removedCommon, false);
-            }
+            CommonAssetUtil.removeCommonAssetsSilentBatch(removedCommon);
         }
     }
 
@@ -1197,16 +1215,12 @@ public class ImageFrameRuntimeManager {
 
     public void broadcastCommonAssets() {
         ensureCommonAssetsRegistered();
-        CommonAssetModule commonAssetModule = CommonAssetModule.get();
-        if (commonAssetModule == null) {
-            return;
-        }
         java.util.List<com.hypixel.hytale.server.core.asset.common.CommonAsset> assets = CommonAssetRegistry
                 .getCommonAssetsStartingWith(RUNTIME_ASSETS_PACK, "Blocks/ImageFrames/tiles/");
         if (assets == null || assets.isEmpty()) {
             return;
         }
-        commonAssetModule.sendAssets(assets, false);
+        CommonAssetUtil.sendCommonAssetsSilentBatch(assets);
         plugin.getLogger().at(java.util.logging.Level.INFO).log("Broadcasted %d ImageFrames textures", assets.size());
     }
 
@@ -1282,12 +1296,8 @@ public class ImageFrameRuntimeManager {
     }
 
     private FileCommonAsset registerCommonAsset(String assetPath, Path filePath, byte[] bytes) {
-        CommonAssetModule commonAssetModule = CommonAssetModule.get();
-        if (commonAssetModule == null) {
-            return null;
-        }
         FileCommonAsset asset = new FileCommonAsset(filePath, assetPath, bytes);
-        commonAssetModule.addCommonAsset(RUNTIME_ASSETS_PACK, asset);
+        CommonAssetUtil.addCommonAssetSilent(RUNTIME_ASSETS_PACK, asset, false);
         return asset;
     }
 
