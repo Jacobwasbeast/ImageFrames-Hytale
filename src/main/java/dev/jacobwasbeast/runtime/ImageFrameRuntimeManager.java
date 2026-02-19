@@ -6,12 +6,12 @@ import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.math.vector.Vector3i;
 import com.hypixel.hytale.math.vector.Vector4d;
+import com.hypixel.hytale.protocol.ToClientPacket;
 import com.hypixel.hytale.server.core.asset.AssetModule;
 import com.hypixel.hytale.assetstore.AssetUpdateQuery;
 import com.hypixel.hytale.server.core.asset.common.CommonAsset;
 import com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry;
 import com.hypixel.hytale.server.core.asset.common.asset.FileCommonAsset;
-import com.hypixel.hytale.protocol.Packet;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.component.AddReason;
 import com.hypixel.hytale.server.core.inventory.ItemStack;
@@ -223,7 +223,7 @@ public class ImageFrameRuntimeManager {
                     .build();
             manifest.setName(RUNTIME_ASSETS_PACK);
             manifest.setVersion(Semver.fromString("1.0.0"));
-            AssetModule.get().registerPack(RUNTIME_ASSETS_PACK, runtimeAssetsPath, manifest);
+            AssetModule.get().registerPack(RUNTIME_ASSETS_PACK, runtimeAssetsPath, manifest, true);
         } catch (Exception e) {
             plugin.getLogger().at(Level.SEVERE).withCause(e).log("Failed to register ImageFrames runtime pack");
         }
@@ -1160,9 +1160,10 @@ public class ImageFrameRuntimeManager {
             @SuppressWarnings("unchecked")
             var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType
                     .getAssetStore();
-            Packet packet = assetStore.getPacketGenerator().generateUpdatePacket(assetStore.getAssetMap(), loaded,
+            var packet = assetStore.getPacketGenerator().generateUpdatePacket(assetStore.getAssetMap(), loaded,
                     TILE_UPDATE_QUERY);
-            com.hypixel.hytale.server.core.universe.Universe.get().broadcastPacketNoCache(packet);
+            com.hypixel.hytale.server.core.universe.Universe.get()
+                    .broadcastPacketNoCache((ToClientPacket) packet);
             plugin.getLogger().at(java.util.logging.Level.INFO).log("Broadcasted %d ImageFrames block types",
                     loaded.size());
         }
@@ -1205,9 +1206,10 @@ public class ImageFrameRuntimeManager {
             @SuppressWarnings("unchecked")
             var assetStore = (com.hypixel.hytale.server.core.asset.HytaleAssetStore<String, BlockType, com.hypixel.hytale.assetstore.map.BlockTypeAssetMap<String, BlockType>>) BlockType
                     .getAssetStore();
-            Packet packet = assetStore.getPacketGenerator().generateUpdatePacket(assetStore.getAssetMap(), loaded,
+            var packet = assetStore.getPacketGenerator().generateUpdatePacket(assetStore.getAssetMap(), loaded,
                     TILE_UPDATE_QUERY);
-            com.hypixel.hytale.server.core.universe.Universe.get().broadcastPacketNoCache(packet);
+            com.hypixel.hytale.server.core.universe.Universe.get()
+                    .broadcastPacketNoCache((ToClientPacket) packet);
             plugin.getLogger().at(java.util.logging.Level.INFO).log("Broadcasted ImageFrames group block types: %d",
                     loaded.size());
         }
