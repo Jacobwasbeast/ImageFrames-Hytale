@@ -18,9 +18,9 @@ import com.hypixel.hytale.server.core.modules.interaction.interaction.config.Int
 import com.hypixel.hytale.server.core.ui.builder.EventData;
 import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.ui.builder.UIEventBuilder;
-import com.hypixel.hytale.math.vector.Vector3d;
-import com.hypixel.hytale.math.vector.Vector3i;
-import com.hypixel.hytale.math.vector.Vector4d;
+import org.joml.Vector3d;
+import org.joml.Vector3i;
+import org.joml.Vector4d;
 import com.hypixel.hytale.protocol.BlockPosition;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -56,7 +56,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                 && dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isBannerBlockId(group.blockId);
         if (!isBanner && blockPos != null && world != null) {
             try {
-                var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+                var blockType = dev.jacobwasbeast.util.FrameBlockAccess.getBlockType(world, blockPos);
                 String blockId = blockType != null ? blockType.getId() : null;
                 isBanner = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isBannerBlockId(blockId);
             } catch (Exception ignored) {
@@ -102,7 +102,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             // Check if current block is a panel
             if (blockPos != null && world != null) {
                 try {
-                    var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+                    var blockType = dev.jacobwasbeast.util.FrameBlockAccess.getBlockType(world, blockPos);
                     if (blockType != null) {
                         String blockId = blockType.getId();
                         boolean isPanel = dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isPanelBlockId(blockId);
@@ -165,6 +165,10 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
     @Override
     public void handleDataEvent(@Nonnull Ref<EntityStore> ref, @Nonnull Store<EntityStore> store,
             @Nonnull FramePageData data) {
+        if (!plugin.isInitialized()) {
+            playerRef.sendMessage(Message.raw("ImageFrames is not ready. Please try again shortly."));
+            return;
+        }
         Player player = store.getComponent(ref, Player.getComponentType());
         if (player == null) {
             return;
@@ -201,7 +205,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
         }
         // Close UI immediately for panels when applying an image.
         try {
-            var blockType = world.getBlockType(blockPos.getX(), blockPos.getY(), blockPos.getZ());
+            var blockType = dev.jacobwasbeast.util.FrameBlockAccess.getBlockType(world, blockPos);
             String blockId = blockType != null ? blockType.getId() : null;
             if (dev.jacobwasbeast.runtime.ImageFrameRuntimeManager.isPanelLikeBlockId(blockId)) {
                 player.getPageManager().setPage(ref, store, Page.None);
@@ -275,7 +279,7 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
 
             FrameGroup previousGroup = plugin.getStore().getGroupByPos(world.getName(), blockPos);
             // Read rotation from ORIGINAL blocks BEFORE placePlaceholder replaces them
-            java.util.Map<com.hypixel.hytale.math.vector.Vector3i, Integer> originalRotations =
+            java.util.Map<org.joml.Vector3i, Integer> originalRotations =
                     plugin.getRuntimeManager().readOriginalRotations(world, info);
             plugin.getRuntimeManager().placePlaceholder(world, info, originalRotations);
 
@@ -311,21 +315,23 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                         } catch (Exception e) {
                             throw new RuntimeException(e);
                         }
-                    })
+                    }, plugin.getAssetExecutor())
                     .thenAccept(group -> {
+                        if (!plugin.isInitialized()) return;
                         // Broadcast assets (same flow as original frames)
                         plugin.getRuntimeManager().broadcastGroupAssets(group);
                         world.execute(() -> {
+                            if (!plugin.isInitialized() || !world.isAlive()) return;
                             // Store rotations in group for use in applyGroup
                             group.originalRotations = originalRotations;
                             plugin.getRuntimeManager().applyGroupWhenReady(world, info, group, 20,
                                     () -> {
                                         playerRef.sendMessage(Message.raw("ImageFrame updated."));
-                                        player.getPageManager().setPage(ref, store, Page.None);
+                                        if (ref.isValid()) player.getPageManager().setPage(ref, store, Page.None);
                                     },
                                     () -> {
                                         if (previousGroup != null) {
-                                            plugin.getRuntimeManager().applyGroup(world, info, previousGroup, previousGroup.originalRotations != null ? previousGroup.originalRotations : new java.util.HashMap<>());
+                                            plugin.getRuntimeManager().applyGroup(world, info, previousGroup, originalRotations);
                                         }
                                         playerRef.sendMessage(
                                                 Message.raw("ImageFrame assets are still loading. Try again in a moment."));
@@ -333,9 +339,11 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
                         });
                     })
                     .exceptionally(ex -> {
+                        if (!plugin.isInitialized()) return null;
                         world.execute(() -> {
+                            if (!plugin.isInitialized() || !world.isAlive()) return;
                             if (previousGroup != null) {
-                                plugin.getRuntimeManager().applyGroup(world, info, previousGroup, previousGroup.originalRotations != null ? previousGroup.originalRotations : new java.util.HashMap<>());
+                                plugin.getRuntimeManager().applyGroup(world, info, previousGroup, originalRotations);
                             }
                             playerRef.sendMessage(Message.raw("Failed to apply image: " + ex.getMessage()));
                         });
@@ -376,7 +384,8 @@ public class ImageFrameConfigPage extends InteractiveCustomUIPage<ImageFrameConf
             return fallback;
         }
         try {
-            return Double.parseDouble(text.trim());
+            double value = Double.parseDouble(text.trim());
+            return Double.isFinite(value) ? value : fallback;
         } catch (NumberFormatException e) {
             return fallback;
         }

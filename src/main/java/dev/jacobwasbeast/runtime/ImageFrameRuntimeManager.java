@@ -2,10 +2,11 @@ package dev.jacobwasbeast.runtime;
 
 import com.hypixel.hytale.common.plugin.PluginManifest;
 import com.hypixel.hytale.common.semver.Semver;
-import com.hypixel.hytale.math.vector.Vector3d;
-import com.hypixel.hytale.math.vector.Vector3f;
-import com.hypixel.hytale.math.vector.Vector3i;
-import com.hypixel.hytale.math.vector.Vector4d;
+import org.joml.Vector3d;
+import com.hypixel.hytale.math.vector.Rotation3f;
+import com.hypixel.hytale.math.vector.Rotation3fc;
+import org.joml.Vector3i;
+import org.joml.Vector4d;
 import com.hypixel.hytale.protocol.ToClientPacket;
 import com.hypixel.hytale.server.core.asset.AssetModule;
 import com.hypixel.hytale.assetstore.AssetUpdateQuery;
@@ -21,6 +22,8 @@ import dev.jacobwasbeast.ImageFramesPlugin;
 import dev.jacobwasbeast.store.ImageFrameStore;
 import dev.jacobwasbeast.store.ImageFrameStore.FrameGroup;
 import dev.jacobwasbeast.util.CommonAssetUtil;
+import dev.jacobwasbeast.util.FrameBlockAccess;
+import dev.jacobwasbeast.util.ImageLimits;
 import it.unimi.dsi.fastutil.booleans.BooleanObjectPair;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
@@ -40,13 +43,13 @@ import java.util.logging.Level;
 import javax.imageio.ImageIO;
 
 public class ImageFrameRuntimeManager {
-    public static final String BASE_BLOCK_ID = "image_frames:frame";
+    public static final String BASE_BLOCK_ID = "image_frames_frame";
     public static final String SLIM_BLOCK_ID = "image_frames:slim_frame";
-    public static final String PANEL_BLOCK_ID = "image_frames:panel";
+    public static final String PANEL_BLOCK_ID = "image_frames_panel";
     public static final String PANEL_INVISIBLE_BLOCK_ID = "image_frames:panel_invisible";
-    public static final String BANNER_BLOCK_ID = "image_frames:banner";
+    public static final String BANNER_BLOCK_ID = "image_frames_banner";
     public static final String TILE_PREFIX = "ImageFrames_Tile_";
-    private static final String AIR_BLOCK_ID = "empty";
+    private static final String AIR_BLOCK_ID = BlockType.EMPTY_KEY;
 
     private static final String RUNTIME_ASSETS_PACK = "ImageFramesRuntimeAssets";
     private static final String RUNTIME_ASSETS_DIR = "image_frames_assets";
@@ -61,7 +64,7 @@ public class ImageFrameRuntimeManager {
     private static final String BANNER_MODEL_DIR = "Blocks/ImageFrames/BannerModels/";
     private static final String BANNER_MODEL_PATH = "Blocks/ImageFrames/Banner.blockymodel";
     private static final AssetUpdateQuery TILE_UPDATE_QUERY = new AssetUpdateQuery(
-            new AssetUpdateQuery.RebuildCache(true, false, false, false, false, false));
+            new AssetUpdateQuery.RebuildCache(true, true, true, true, false, true));
 
     private final ImageFramesPlugin plugin;
     private final ImageFrameStore store;
@@ -75,6 +78,7 @@ public class ImageFrameRuntimeManager {
     private volatile Double bannerMaskAspectCache;
     private final ImageFrameImageCache imageCache;
     private final AtomicBoolean integrityCheckStarted = new AtomicBoolean(false);
+    private java.util.concurrent.ScheduledFuture<?> integrityCheck;
 
     public ImageFrameRuntimeManager(ImageFramesPlugin plugin, ImageFrameStore store) {
         this.plugin = plugin;
@@ -86,17 +90,24 @@ public class ImageFrameRuntimeManager {
         this.imageCache = new ImageFrameImageCache(java.nio.file.Path.of("ImageFrames"));
     }
 
-    public void init() {
+    public void init() throws IOException {
         try {
             Files.createDirectories(runtimeCommonBlocksPath);
             Files.createDirectories(runtimeBlockTypesPath);
             ensureRuntimePackImmutableMarker();
+            // Late pack registration immediately validates its JSON. Restore textures and models first.
+            ensureCommonAssetsRegistered();
             registerRuntimeAssetsPack();
             loadExistingRuntimeAssets();
             cleanupRuntimeAssetsAgainstStore();
             rebuildAssetsFromStore();
+            for (FrameGroup group : store.getGroupsSnapshot().values()) {
+                if (!areTileBlockTypesReady(buildGroupInfoFromStore(group), group)) {
+                    throw new IOException("Missing runtime assets for frame " + group.groupId);
+                }
+            }
         } catch (Exception e) {
-            plugin.getLogger().at(Level.SEVERE).withCause(e).log("Failed to initialize ImageFrames runtime assets");
+            throw new IOException("Failed to initialize ImageFrames runtime assets", e);
         }
     }
 
@@ -104,14 +115,20 @@ public class ImageFrameRuntimeManager {
         if (intervalSeconds <= 0 || !integrityCheckStarted.compareAndSet(false, true)) {
             return;
         }
-        com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR.scheduleWithFixedDelay(
+        integrityCheck = com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR.scheduleWithFixedDelay(
                 this::validateGroupsIntegrity,
                 intervalSeconds,
                 intervalSeconds,
                 java.util.concurrent.TimeUnit.SECONDS);
     }
 
+    public void shutdown() {
+        if (integrityCheck != null) integrityCheck.cancel(false);
+        imageCache.clearMemory();
+    }
+
     private void validateGroupsIntegrity() {
+        if (!plugin.isInitialized()) return;
         Map<String, FrameGroup> groups = store.getGroupsSnapshot();
         if (groups == null || groups.isEmpty()) {
             return;
@@ -124,7 +141,11 @@ public class ImageFrameRuntimeManager {
             if (world == null) {
                 continue;
             }
-            world.execute(() -> validateGroupInWorld(world, group));
+            world.execute(() -> {
+                if (plugin.isInitialized() && world.isAlive() && store.getGroup(group.groupId) == group) {
+                    validateGroupInWorld(world, group);
+                }
+            });
         }
     }
 
@@ -136,17 +157,18 @@ public class ImageFrameRuntimeManager {
         if (info.blocks == null || info.blocks.isEmpty()) {
             return;
         }
+        // Check every section before detecting missing blocks, including cross-section groups.
+        if (!info.blocks.stream().allMatch(pos -> FrameBlockAccess.isLoaded(world, pos))) return;
         Vector3i missing = null;
         for (Vector3i pos : info.blocks) {
             if (pos == null) {
                 continue;
             }
-            long chunkIndex = com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(pos.getX(), pos.getZ());
-            if (world.getChunk(chunkIndex) == null) {
+            if (!FrameBlockAccess.isLoaded(world, pos)) {
                 // Avoid false positives when chunks are not loaded.
                 return;
             }
-            BlockType blockType = world.getBlockType(pos);
+            BlockType blockType = FrameBlockAccess.getBlockType(world, pos);
             String blockId = blockType != null ? blockType.getId() : null;
             if (!isFrameBlockId(blockId)) {
                 missing = pos;
@@ -154,8 +176,8 @@ public class ImageFrameRuntimeManager {
             }
         }
         if (missing != null) {
-            dropGroupItems(world, group, missing);
             removeGroupAndAssets(world, group);
+            dropGroupItems(world, group, missing);
         }
     }
 
@@ -198,7 +220,7 @@ public class ImageFrameRuntimeManager {
         }
         Vector3d dropPos;
         if (pos != null) {
-            dropPos = new Vector3d(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+            dropPos = new Vector3d(pos.x() + 0.5, pos.y() + 0.5, pos.z() + 0.5);
         } else {
             dropPos = new Vector3d(group.minX + group.sizeX / 2.0, group.minY + group.sizeY / 2.0,
                     group.minZ + group.sizeZ / 2.0);
@@ -208,7 +230,7 @@ public class ImageFrameRuntimeManager {
         while (remaining > 0) {
             int qty = Math.min(remaining, 64);
             ItemStack stack = new ItemStack(dropItemId, qty, null);
-            var holder = ItemComponent.generateItemDrop(store, stack, dropPos, Vector3f.ZERO, 0.0F, 0.0F, 0.0F);
+            var holder = ItemComponent.generateItemDrop(store, stack, dropPos, Rotation3f.ZERO, 0.0F, 0.0F, 0.0F);
             if (holder != null) {
                 store.addEntity(holder, AddReason.SPAWN);
             }
@@ -223,9 +245,12 @@ public class ImageFrameRuntimeManager {
                     .build();
             manifest.setName(RUNTIME_ASSETS_PACK);
             manifest.setVersion(Semver.fromString("1.0.0"));
-            AssetModule.get().registerPack(RUNTIME_ASSETS_PACK, runtimeAssetsPath, manifest, true);
+            if (!AssetModule.get().registerPack(RUNTIME_ASSETS_PACK, runtimeAssetsPath, manifest,
+                    com.hypixel.hytale.assetstore.AssetPack.PackSource.RUNTIME)) {
+                throw new IllegalStateException("Failed to register ImageFrames runtime pack");
+            }
         } catch (Exception e) {
-            plugin.getLogger().at(Level.SEVERE).withCause(e).log("Failed to register ImageFrames runtime pack");
+            throw new IllegalStateException("Failed to register ImageFrames runtime pack", e);
         }
     }
 
@@ -346,13 +371,13 @@ public class ImageFrameRuntimeManager {
             return;
         }
         List<CommonAsset> toRegister = new ArrayList<>();
-        try (var stream = Files.list(runtimeCommonBlocksPath)) {
+        try (var stream = Files.walk(runtimeAssetsPath.resolve("Common"))) {
             for (Path path : (Iterable<Path>) stream::iterator) {
-                if (!path.getFileName().toString().toLowerCase().endsWith(".png")) {
+                String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+                if (!Files.isRegularFile(path) || (!name.endsWith(".png") && !name.endsWith(".blockymodel"))) {
                     continue;
                 }
-                String fileName = path.getFileName().toString();
-                String assetPath = "Blocks/ImageFrames/tiles/" + fileName;
+                String assetPath = runtimeAssetsPath.resolve("Common").relativize(path).toString().replace('\\', '/');
                 if (CommonAssetRegistry.hasCommonAsset(assetPath)) {
                     continue;
                 }
@@ -447,7 +472,7 @@ public class ImageFrameRuntimeManager {
         FrameGroup existing = store.getGroupByPos(world.getName(), target);
         GroupInfo info = existing != null ? buildGroupInfoFromStore(existing)
                 : collectGroup(world, target, preferredNormal);
-        if (!info.valid) {
+        if (!info.valid || !info.blocks.stream().allMatch(pos -> FrameBlockAccess.isLoaded(world, pos))) {
             throw new IOException("Frames must be in a flat rectangle (e.g., 2x2, 3x3)");
         }
         return info;
@@ -474,6 +499,7 @@ public class ImageFrameRuntimeManager {
             tileHeight = Math.max(1, (int) Math.round(tileSize * aspect));
         }
         // Apply fit modes directly to target dimensions (not square first)
+        ImageLimits.checkDimensions((long) info.width * tileSize, (long) info.height * tileHeight);
         int targetW = info.width * tileSize;
         int targetH = info.height * tileHeight;
         BufferedImage processed = scaleImage(source, targetW, targetH, fit);
@@ -592,7 +618,7 @@ public class ImageFrameRuntimeManager {
 
                 Vector3i pos = info.toWorldPos(tx, ty, facing);
                 group.tileBlocks.put(
-                        ImageFrameStore.toPosKey(info.worldName, pos.getX(), pos.getY(), pos.getZ()),
+                        ImageFrameStore.toPosKey(info.worldName, pos.x(), pos.y(), pos.z()),
                         tileKey);
             }
         }
@@ -638,6 +664,7 @@ public class ImageFrameRuntimeManager {
             tileHeight = Math.max(1, (int) Math.round(tileSize * aspect));
         }
         // Apply fit modes directly to target dimensions (not square first)
+        ImageLimits.checkDimensions((long) info.width * tileSize, (long) info.height * tileHeight);
         int targetW = info.width * tileSize;
         int targetH = info.height * tileHeight;
         BufferedImage processed = scaleImage(source, targetW, targetH, fit);
@@ -729,7 +756,7 @@ public class ImageFrameRuntimeManager {
                     blockTypePaths.add(jsonPath);
                 }
                 Vector3i pos = info.toWorldPos(tx, ty, facing);
-                group.tileBlocks.put(ImageFrameStore.toPosKey(info.worldName, pos.getX(), pos.getY(), pos.getZ()),
+                group.tileBlocks.put(ImageFrameStore.toPosKey(info.worldName, pos.x(), pos.y(), pos.z()),
                         tileKey);
             }
         }
@@ -755,65 +782,31 @@ public class ImageFrameRuntimeManager {
     }
 
     public void applyGroup(World world, GroupInfo info, FrameGroup group, Map<Vector3i, Integer> rotations) {
+        if (!plugin.isInitialized() || !info.blocks.stream().allMatch(pos -> FrameBlockAccess.isLoaded(world, pos))) return;
         placeTiles(world, info, group, rotations);
         store.putGroup(group);
     }
 
+    public boolean isGroupLoaded(World world, FrameGroup group) {
+        GroupInfo info = buildGroupInfoFromStore(group);
+        return info.valid && info.blocks.stream().allMatch(pos -> FrameBlockAccess.isLoaded(world, pos));
+    }
+
     public void removeGroupAndAssets(World world, FrameGroup group) {
-        if (group == null) {
-            return;
+        if (group == null || world == null || !isGroupLoaded(world, group)) return;
+        GroupInfo info = buildGroupInfoFromStore(group);
+        // A bounded group is cleared in one world task, so its sections cannot unload mid-edit.
+        for (Vector3i pos : info.blocks) {
+            FrameBlockAccess.setBlock(world, pos, AIR_BLOCK_ID, 0);
         }
         store.removeGroup(group.groupId);
-        if (world != null && group.tileBlocks != null && !group.tileBlocks.isEmpty()) {
-            List<Vector3i> positions = new ArrayList<>();
-            for (String posKey : group.tileBlocks.keySet()) {
-                Vector3i pos = parsePosKey(group.worldName, posKey);
-                if (pos != null) {
-                    positions.add(pos);
-                }
-            }
-            scheduleBlockClear(world, positions, 256, null);
-            scheduleRemoveGroupAssets(group,5);
-        }
+        scheduleRemoveGroupAssets(group, 5);
     }
-
-    private void scheduleBlockClear(World world, List<Vector3i> positions, int batchSize, Runnable onComplete) {
-        if (positions == null || positions.isEmpty()) {
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-        java.util.concurrent.atomic.AtomicInteger index = new java.util.concurrent.atomic.AtomicInteger(0);
-        java.lang.Runnable task = new java.lang.Runnable() {
-            @Override
-            public void run() {
-                world.execute(() -> {
-                    int start = index.get();
-                    int end = Math.min(start + batchSize, positions.size());
-                    for (int i = start; i < end; i++) {
-                        Vector3i pos = positions.get(i);
-                        world.setBlock(pos.getX(), pos.getY(), pos.getZ(), AIR_BLOCK_ID);
-                    }
-                    if (end >= positions.size()) {
-                        if (onComplete != null) {
-                            onComplete.run();
-                        }
-                    } else {
-                        index.set(end);
-                        com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR
-                                .schedule(this, 1, java.util.concurrent.TimeUnit.MILLISECONDS);
-                    }
-                });
-            }
-        };
-        com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR
-                .schedule(task, 1, java.util.concurrent.TimeUnit.MILLISECONDS);
-    }
-
     private void scheduleRemoveGroupAssets(FrameGroup group, int delaySeconds) {
         com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR.schedule(
-                () -> removeGroupAssets(group),
+                () -> {
+                    if (plugin.isInitialized()) removeGroupAssets(group);
+                },
                 delaySeconds,
                 java.util.concurrent.TimeUnit.SECONDS);
     }
@@ -900,102 +893,8 @@ public class ImageFrameRuntimeManager {
     }
 
     private int readRotation(World world, Vector3i pos) {
-        try {
-            long chunkIndex = com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(pos.getX(), pos.getZ());
-            var chunk = world.getChunk(chunkIndex);
-            if (chunk != null) {
-                // Try all methods on chunk
-                java.lang.reflect.Method[] methods = chunk.getClass().getMethods();
-                for (java.lang.reflect.Method method : methods) {
-                    if (method.getName().toLowerCase().contains("rotation") || method.getName().toLowerCase().contains("variant")) {
-                        try {
-                            if (method.getParameterCount() == 3) {
-                                Object result = method.invoke(chunk, pos.getX(), pos.getY(), pos.getZ());
-                                if (result instanceof Integer) {
-                                    int rotation = (Integer) result;
-                                    plugin.getLogger().at(Level.INFO).log("Read rotation %d using method %s at %d,%d,%d", rotation, method.getName(), pos.getX(), pos.getY(), pos.getZ());
-                                    return rotation;
-                                }
-                            }
-                        } catch (Exception ignored) {
-                        }
-                    }
-                }
-
-                // Try getBlockData and inspect all fields/methods
-                try {
-                    java.lang.reflect.Method getBlockData = chunk.getClass().getMethod("getBlockData", int.class, int.class, int.class);
-                    Object blockData = getBlockData.invoke(chunk, pos.getX(), pos.getY(), pos.getZ());
-                    if (blockData != null) {
-                        // Try all fields
-                        java.lang.reflect.Field[] fields = blockData.getClass().getFields();
-                        for (java.lang.reflect.Field field : fields) {
-                            String fieldName = field.getName().toLowerCase();
-                            if (fieldName.contains("rotation") || fieldName.contains("variant")) {
-                                try {
-                                    Object value = field.get(blockData);
-                                    if (value instanceof Integer) {
-                                        int rotation = (Integer) value;
-                                        plugin.getLogger().at(Level.INFO).log("Read rotation %d from field %s at %d,%d,%d", rotation, field.getName(), pos.getX(), pos.getY(), pos.getZ());
-                                        return rotation;
-                                    }
-                                } catch (Exception ignored) {
-                                }
-                            }
-                        }
-
-                        // Try all methods on blockData
-                        java.lang.reflect.Method[] blockDataMethods = blockData.getClass().getMethods();
-                        for (java.lang.reflect.Method method : blockDataMethods) {
-                            String methodName = method.getName().toLowerCase();
-                            if ((methodName.contains("rotation") || methodName.contains("variant")) && method.getParameterCount() == 0) {
-                                try {
-                                    Object result = method.invoke(blockData);
-                                    if (result instanceof Integer) {
-                                        int rotation = (Integer) result;
-                                        plugin.getLogger().at(Level.INFO).log("Read rotation %d using blockData method %s at %d,%d,%d", rotation, method.getName(), pos.getX(), pos.getY(), pos.getZ());
-                                        return rotation;
-                                    }
-                                } catch (Exception ignored) {
-                                }
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    plugin.getLogger().at(Level.FINE).log("getBlockData failed: %s", e.getMessage());
-                }
-
-                // Try getBlockType and inspect it
-                try {
-                    java.lang.reflect.Method getBlockType = chunk.getClass().getMethod("getBlockType", int.class, int.class, int.class);
-                    Object blockType = getBlockType.invoke(chunk, pos.getX(), pos.getY(), pos.getZ());
-                    if (blockType != null) {
-                        java.lang.reflect.Method[] blockTypeMethods = blockType.getClass().getMethods();
-                        for (java.lang.reflect.Method method : blockTypeMethods) {
-                            String methodName = method.getName().toLowerCase();
-                            if ((methodName.contains("rotation") || methodName.contains("variant")) && method.getParameterCount() == 0) {
-                                try {
-                                    Object result = method.invoke(blockType);
-                                    if (result instanceof Integer) {
-                                        int rotation = (Integer) result;
-                                        plugin.getLogger().at(Level.INFO).log("Read rotation %d using blockType method %s at %d,%d,%d", rotation, method.getName(), pos.getX(), pos.getY(), pos.getZ());
-                                        return rotation;
-                                    }
-                                } catch (Exception ignored) {
-                                }
-                            }
-                        }
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-        } catch (Exception e) {
-            plugin.getLogger().at(Level.WARNING).withCause(e).log("Exception reading rotation at %d,%d,%d", pos.getX(), pos.getY(), pos.getZ());
-        }
-        plugin.getLogger().at(Level.WARNING).log("Failed to read rotation at %d,%d,%d", pos.getX(), pos.getY(), pos.getZ());
-        return -1; // -1 means couldn't read rotation
+        return FrameBlockAccess.getRotation(world, pos);
     }
-
     public Map<Vector3i, Integer> readOriginalRotations(World world, GroupInfo info) {
         Map<Vector3i, Integer> rotations = new HashMap<>();
         String blockId = (info.blockId != null && !info.blockId.isEmpty()) ? info.blockId : BASE_BLOCK_ID;
@@ -1010,9 +909,9 @@ public class ImageFrameRuntimeManager {
             int rotation = readRotation(world, pos);
             if (rotation >= 0) {
                 rotations.put(pos, rotation);
-                plugin.getLogger().at(Level.INFO).log("Stored rotation %d for position %d,%d,%d", rotation, pos.getX(), pos.getY(), pos.getZ());
+                plugin.getLogger().at(Level.INFO).log("Stored rotation %d for position %d,%d,%d", rotation, pos.x(), pos.y(), pos.z());
             } else {
-                plugin.getLogger().at(Level.WARNING).log("Could not read rotation for position %d,%d,%d", pos.getX(), pos.getY(), pos.getZ());
+                plugin.getLogger().at(Level.WARNING).log("Could not read rotation for position %d,%d,%d", pos.x(), pos.y(), pos.z());
             }
         }
         plugin.getLogger().at(Level.INFO).log("Read %d rotations out of %d blocks", rotations.size(), info.blocks.size());
@@ -1020,35 +919,11 @@ public class ImageFrameRuntimeManager {
     }
 
     public void placePlaceholder(World world, GroupInfo info, Map<Vector3i, Integer> rotations) {
-        if (world == null || info == null || info.blocks == null) {
-            return;
-        }
         String blockId = (info.blockId != null && !info.blockId.isEmpty()) ? info.blockId : BASE_BLOCK_ID;
-        boolean isPanel = isPanelLikeBlockId(blockId);
-
         for (Vector3i pos : info.blocks) {
-            if (isPanel && rotations != null && rotations.containsKey(pos)) {
-                // Use stored rotation from original block
-                int rotation = rotations.get(pos);
-                try {
-                    long chunkIndex = com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(pos.getX(), pos.getZ());
-                    var chunk = world.getChunk(chunkIndex);
-                    if (chunk != null) {
-                        int newBlockId = BlockType.getAssetMap().getIndex(blockId);
-                        BlockType blockType = BlockType.getAssetMap().getAsset(newBlockId);
-                        if (blockType != null) {
-                            chunk.setBlock(pos.getX(), pos.getY(), pos.getZ(), newBlockId, blockType, rotation, 0, 0);
-                            continue;
-                        }
-                    }
-                } catch (Exception ignored) {
-                }
-            }
-            // Fallback to world.setBlock
-            world.setBlock(pos.getX(), pos.getY(), pos.getZ(), blockId);
+            FrameBlockAccess.setBlock(world, pos, blockId, rotations.getOrDefault(pos, 0));
         }
     }
-
     public void applyGroupWhenReady(World world, GroupInfo info, FrameGroup group, int remaining,
             Runnable onSuccess, Runnable onTimeout) {
         // FIRST: Broadcast assets to ensure they're available before placing blocks
@@ -1056,6 +931,11 @@ public class ImageFrameRuntimeManager {
 
         // Then check if ready and place immediately (no delay)
         world.execute(() -> {
+            if (!plugin.isInitialized() || !world.isAlive()) return;
+            if (!info.blocks.stream().allMatch(pos -> FrameBlockAccess.isLoaded(world, pos))) {
+                if (onTimeout != null) onTimeout.run();
+                return;
+            }
             if (areTileBlockTypesReady(info, group)) {
                 // Assets are broadcast and ready - place tiles immediately
                 // Use stored rotations from group (read before placePlaceholder)
@@ -1218,7 +1098,7 @@ public class ImageFrameRuntimeManager {
     public void broadcastCommonAssets() {
         ensureCommonAssetsRegistered();
         java.util.List<com.hypixel.hytale.server.core.asset.common.CommonAsset> assets = CommonAssetRegistry
-                .getCommonAssetsStartingWith(RUNTIME_ASSETS_PACK, "Blocks/ImageFrames/tiles/");
+                .getCommonAssetsStartingWith(RUNTIME_ASSETS_PACK, "Blocks/ImageFrames/");
         if (assets == null || assets.isEmpty()) {
             return;
         }
@@ -1264,7 +1144,7 @@ public class ImageFrameRuntimeManager {
         for (dev.jacobwasbeast.store.ImageFrameStore.FrameGroup group : worldGroups) {
             // Build GroupInfo from stored group
             GroupInfo info = buildGroupInfoFromStore(group);
-            if (!info.valid) {
+            if (!info.valid || !isGroupLoaded(world, group)) {
                 continue;
             }
 
@@ -1635,9 +1515,9 @@ public class ImageFrameRuntimeManager {
             return null;
         }
         return switch (info.normalAxis) {
-            case X -> hitLocation.x >= targetBlock.getX() + 0.5 ? "East" : "West";
-            case Y -> hitLocation.y >= targetBlock.getY() + 0.5 ? "Up" : "Down";
-            case Z -> hitLocation.z >= targetBlock.getZ() + 0.5 ? "South" : "North";
+            case X -> hitLocation.x >= targetBlock.x() + 0.5 ? "East" : "West";
+            case Y -> hitLocation.y >= targetBlock.y() + 0.5 ? "Up" : "Down";
+            case Z -> hitLocation.z >= targetBlock.z() + 0.5 ? "South" : "North";
         };
     }
 
@@ -1656,9 +1536,9 @@ public class ImageFrameRuntimeManager {
         if (hit == null || target == null) {
             return null;
         }
-        double rx = hit.x - (target.getX() + 0.5);
-        double ry = hit.y - (target.getY() + 0.5);
-        double rz = hit.z - (target.getZ() + 0.5);
+        double rx = hit.x - (target.x() + 0.5);
+        double ry = hit.y - (target.y() + 0.5);
+        double rz = hit.z - (target.z() + 0.5);
 
         if (Math.abs(rx) > Math.abs(ry) && Math.abs(rx) > Math.abs(rz)) {
             return Axis.X;
@@ -1674,12 +1554,12 @@ public class ImageFrameRuntimeManager {
             return null;
         }
 
-        double minX = target.getX();
-        double maxX = target.getX() + 1.0;
-        double minY = target.getY();
-        double maxY = target.getY() + 1.0;
-        double minZ = target.getZ();
-        double maxZ = target.getZ() + 1.0;
+        double minX = target.x();
+        double maxX = target.x() + 1.0;
+        double minY = target.y();
+        double maxY = target.y() + 1.0;
+        double minZ = target.z();
+        double maxZ = target.z() + 1.0;
 
         // Check if inside? Assume outside.
         // Slab method
@@ -1764,14 +1644,14 @@ public class ImageFrameRuntimeManager {
         }
     }
 
-    public static Vector3d getForwardVector(com.hypixel.hytale.math.vector.Vector3f rotation) {
+    public static Vector3d getForwardVector(Rotation3fc rotation) {
         // Rotation is in Radians. Pitch: +PI/2 = Up, -PI/2 = Down. Yaw: 0 = -Z (North).
         // x = -sin(yaw) * cos(pitch)
         // y = sin(pitch)
         // z = -cos(yaw) * cos(pitch)
 
-        double yaw = rotation.getYaw();
-        double pitch = rotation.getPitch();
+        double yaw = rotation.yaw();
+        double pitch = rotation.pitch();
 
         double cosPitch = Math.cos(pitch);
         double x = -Math.sin(yaw) * cosPitch;
@@ -1795,64 +1675,41 @@ public class ImageFrameRuntimeManager {
     }
 
     private void placeTiles(World world, GroupInfo info, FrameGroup group, Map<Vector3i, Integer> rotations) {
-        String safeId = group.safeId != null && !group.safeId.isEmpty() ? group.safeId
-                : sanitizeFilename(group.groupId);
+        String safeId = group.safeId != null && !group.safeId.isEmpty() ? group.safeId : sanitizeFilename(group.groupId);
         String facing = group.facing != null ? group.facing : "North";
-        boolean isPanel = isPanelLikeBlockId(group.blockId);
-
+        for (Vector3i pos : info.blocks) {
+            if (!FrameBlockAccess.isLoaded(world, pos)) {
+                throw new IllegalStateException("Load every section of the frame before updating it");
+            }
+        }
         for (int ty = 0; ty < info.height; ty++) {
             for (int tx = 0; tx < info.width; tx++) {
                 Vector3i pos = info.toWorldPos(tx, ty, facing);
                 String key = TILE_PREFIX + safeId + "_" + tx + "_" + ty;
-
-                if (isPanel && rotations != null && rotations.containsKey(pos)) {
-                    // Use stored rotation from ORIGINAL block (read before placePlaceholder)
-                    int rotation = rotations.get(pos);
-                    plugin.getLogger().at(Level.INFO).log("Placing tile at %d,%d,%d with stored rotation %d", pos.getX(), pos.getY(), pos.getZ(), rotation);
-                    try {
-                        long chunkIndex = com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(pos.getX(), pos.getZ());
-                        var chunk = world.getChunk(chunkIndex);
-                        if (chunk != null) {
-                            int blockId = BlockType.getAssetMap().getIndex(key);
-                            BlockType blockType = BlockType.getAssetMap().getAsset(blockId);
-                            if (blockType != null) {
-                                chunk.setBlock(pos.getX(), pos.getY(), pos.getZ(), blockId, blockType, rotation, 0, 0);
-                                plugin.getLogger().at(Level.INFO).log("Successfully placed tile with rotation %d", rotation);
-                                continue;
-                            }
-                        }
-                    } catch (Exception e) {
-                        plugin.getLogger().at(Level.WARNING).withCause(e).log("Failed to place tile with rotation at %d,%d,%d", pos.getX(), pos.getY(), pos.getZ());
-                    }
-                } else if (isPanel) {
-                    plugin.getLogger().at(Level.WARNING).log("No stored rotation for panel at %d,%d,%d, using world.setBlock", pos.getX(), pos.getY(), pos.getZ());
-                }
-                // Fallback to world.setBlock
-                world.setBlock(pos.getX(), pos.getY(), pos.getZ(), key);
+                int rotation = rotations != null ? rotations.getOrDefault(pos, 0) : 0;
+                FrameBlockAccess.setBlock(world, pos, key, rotation);
             }
         }
     }
-
     private static BufferedImage downloadImage(String url) throws IOException {
-        if (url == null || url.isEmpty()) {
-            throw new IOException("URL is empty");
-        }
-        URL u = new URL(url);
-        HttpURLConnection conn = (HttpURLConnection) u.openConnection();
+        if (url == null || url.isBlank()) throw new IOException("URL is empty");
+        var connection = new URL(url).openConnection();
+        if (!(connection instanceof HttpURLConnection conn)) throw new IOException("Use an HTTP or HTTPS image URL");
         conn.setConnectTimeout(10000);
         conn.setReadTimeout(15000);
-        conn.setRequestProperty("User-Agent", "ImageFrames/1.0");
-        conn.connect();
-        if (conn.getResponseCode() >= 400) {
-            throw new IOException("HTTP " + conn.getResponseCode());
+        conn.setRequestProperty("User-Agent", "ImageFrames/1.1.1");
+        try {
+            if (conn.getResponseCode() >= 400) throw new IOException("HTTP " + conn.getResponseCode());
+            if (conn.getContentLengthLong() > ImageLimits.MAX_DOWNLOAD_BYTES) {
+                throw new IOException("Image exceeds the 16 MiB limit");
+            }
+            try (InputStream input = conn.getInputStream()) {
+                return ImageLimits.read(input);
+            }
+        } finally {
+            conn.disconnect();
         }
-        BufferedImage img = ImageIO.read(conn.getInputStream());
-        if (img == null) {
-            throw new IOException("Unsupported image");
-        }
-        return img;
     }
-
     private static BufferedImage scaleImage(BufferedImage src, int targetW, int targetH, String fit) {
         if (targetW <= 0 || targetH <= 0) {
             return src;
@@ -3001,30 +2858,34 @@ public class ImageFrameRuntimeManager {
         return cwd;
     }
 
-    private GroupInfo collectGroup(World world, Vector3i start, Axis preferredNormal) {
+    private GroupInfo collectGroup(World world, Vector3i start, Axis preferredNormal) throws IOException {
         String worldName = world.getName();
-        String startBlockId = world.getBlockType(start).getId();
+        BlockType startType = FrameBlockAccess.getBlockType(world, start);
+        if (startType == null || !isFrameBlockId(startType.getId())) throw new IOException("Target frame is not loaded");
+        String startBlockId = startType.getId();
         boolean panelsOnly = isPanelLikeBlockId(startBlockId);
         Set<String> visited = new HashSet<>();
         ArrayDeque<Vector3i> queue = new ArrayDeque<>();
         queue.add(start);
 
-        int minX = start.getX();
-        int minY = start.getY();
-        int minZ = start.getZ();
-        int maxX = start.getX();
-        int maxY = start.getY();
-        int maxZ = start.getZ();
+        int minX = start.x();
+        int minY = start.y();
+        int minZ = start.z();
+        int maxX = start.x();
+        int maxY = start.y();
+        int maxZ = start.z();
 
         List<Vector3i> blocks = new ArrayList<>();
 
         while (!queue.isEmpty()) {
             Vector3i pos = queue.poll();
-            String key = ImageFrameStore.toPosKey(worldName, pos.getX(), pos.getY(), pos.getZ());
+            String key = ImageFrameStore.toPosKey(worldName, pos.x(), pos.y(), pos.z());
             if (!visited.add(key)) {
                 continue;
             }
-            String blockId = world.getBlockType(pos).getId();
+            BlockType type = FrameBlockAccess.getBlockType(world, pos);
+            if (type == null) continue;
+            String blockId = type.getId();
             if (panelsOnly) {
                 if (!isPanelLikeBlockId(blockId)) {
                     continue;
@@ -3033,20 +2894,21 @@ public class ImageFrameRuntimeManager {
                     && !isPanelLikeBlockId(blockId)) {
                 continue;
             }
+            if (blocks.size() >= ImageLimits.MAX_TILES) throw new IOException("Frames are limited to 256 blocks");
             blocks.add(pos);
-            minX = Math.min(minX, pos.getX());
-            minY = Math.min(minY, pos.getY());
-            minZ = Math.min(minZ, pos.getZ());
-            maxX = Math.max(maxX, pos.getX());
-            maxY = Math.max(maxY, pos.getY());
-            maxZ = Math.max(maxZ, pos.getZ());
+            minX = Math.min(minX, pos.x());
+            minY = Math.min(minY, pos.y());
+            minZ = Math.min(minZ, pos.z());
+            maxX = Math.max(maxX, pos.x());
+            maxY = Math.max(maxY, pos.y());
+            maxZ = Math.max(maxZ, pos.z());
 
-            queue.add(new Vector3i(pos.getX() + 1, pos.getY(), pos.getZ()));
-            queue.add(new Vector3i(pos.getX() - 1, pos.getY(), pos.getZ()));
-            queue.add(new Vector3i(pos.getX(), pos.getY() + 1, pos.getZ()));
-            queue.add(new Vector3i(pos.getX(), pos.getY() - 1, pos.getZ()));
-            queue.add(new Vector3i(pos.getX(), pos.getY(), pos.getZ() + 1));
-            queue.add(new Vector3i(pos.getX(), pos.getY(), pos.getZ() - 1));
+            queue.add(new Vector3i(pos.x() + 1, pos.y(), pos.z()));
+            queue.add(new Vector3i(pos.x() - 1, pos.y(), pos.z()));
+            queue.add(new Vector3i(pos.x(), pos.y() + 1, pos.z()));
+            queue.add(new Vector3i(pos.x(), pos.y() - 1, pos.z()));
+            queue.add(new Vector3i(pos.x(), pos.y(), pos.z() + 1));
+            queue.add(new Vector3i(pos.x(), pos.y(), pos.z() - 1));
         }
 
         int sizeX = maxX - minX + 1;
@@ -3054,7 +2916,7 @@ public class ImageFrameRuntimeManager {
         int sizeZ = maxZ - minZ + 1;
 
         boolean flat = (sizeX == 1 || sizeY == 1 || sizeZ == 1);
-        String detectedBlockId = world.getBlockType(start).getId();
+        String detectedBlockId = FrameBlockAccess.getBlockType(world, start).getId();
         GroupInfo info = new GroupInfo(worldName, minX, minY, minZ, sizeX, sizeY, sizeZ, blocks, preferredNormal,
                 detectedBlockId);
         int expected = info.width * info.height;
@@ -3066,6 +2928,12 @@ public class ImageFrameRuntimeManager {
         int sizeX = group.sizeX;
         int sizeY = group.sizeY;
         int sizeZ = group.sizeZ;
+        if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0 || sizeX > ImageLimits.MAX_TILES
+                || sizeY > ImageLimits.MAX_TILES || sizeZ > ImageLimits.MAX_TILES
+                || (long) sizeX * sizeY * sizeZ > ImageLimits.MAX_TILES
+                || (group.tileBlocks != null && group.tileBlocks.size() > ImageLimits.MAX_TILES)) {
+            throw new IllegalArgumentException("Stored frame exceeds the 256 block limit");
+        }
         List<Vector3i> blocks = new ArrayList<>();
         if (group.tileBlocks != null && !group.tileBlocks.isEmpty()) {
             for (String posKey : group.tileBlocks.keySet()) {

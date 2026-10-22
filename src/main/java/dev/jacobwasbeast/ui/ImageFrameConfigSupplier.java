@@ -11,7 +11,7 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.modules.interaction.interaction.config.Interaction;
 import com.hypixel.hytale.protocol.BlockPosition;
-import com.hypixel.hytale.math.vector.Vector3i;
+import org.joml.Vector3i;
 import javax.annotation.Nullable;
 
 public record ImageFrameConfigSupplier() implements OpenCustomUIInteraction.CustomPageSupplier {
@@ -22,6 +22,8 @@ public record ImageFrameConfigSupplier() implements OpenCustomUIInteraction.Cust
     @Nullable
     public CustomUIPage tryCreate(Ref<EntityStore> ref, ComponentAccessor<EntityStore> componentAccessor,
             PlayerRef playerRef, InteractionContext context) {
+        var plugin = dev.jacobwasbeast.ImageFramesPlugin.getInstance();
+        if (plugin == null || !plugin.isInitialized()) return null;
         Vector3i target = null;
         if (context != null) {
             BlockPosition raw = context.getMetaStore().getIfPresentMetaObject(Interaction.TARGET_BLOCK_RAW);
@@ -29,6 +31,6 @@ public record ImageFrameConfigSupplier() implements OpenCustomUIInteraction.Cust
                 target = new Vector3i(raw.x, raw.y, raw.z);
             }
         }
-        return new ImageFrameConfigPage(dev.jacobwasbeast.ImageFramesPlugin.getInstance(), playerRef, target, context);
+        return new ImageFrameConfigPage(plugin, playerRef, target, context);
     }
 }

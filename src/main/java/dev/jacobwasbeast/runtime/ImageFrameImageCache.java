@@ -3,6 +3,7 @@ package dev.jacobwasbeast.runtime;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import dev.jacobwasbeast.util.ImageLimits;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -13,6 +14,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Supplier;
 import javax.imageio.ImageIO;
@@ -24,7 +26,8 @@ public class ImageFrameImageCache {
     private final Path cacheDir;
     private final Path indexPath;
     private final Map<String, CacheEntry> index = new HashMap<>();
-    private final Map<String, BufferedImage> memoryCache = new HashMap<>();
+    private final Map<String, BufferedImage> memoryCache = new LinkedHashMap<>(16, 0.75f, true);
+    private long memoryBytes;
 
     public ImageFrameImageCache(Path baseDir) {
         this.cacheDir = baseDir.resolve("images");
@@ -44,10 +47,13 @@ public class ImageFrameImageCache {
         if (entry != null && entry.fileName != null) {
             Path path = cacheDir.resolve(entry.fileName);
             if (Files.exists(path)) {
-                BufferedImage img = ImageIO.read(path.toFile());
-                if (img != null) {
-                    memoryCache.put(url, img);
+                try {
+                    BufferedImage img = ImageLimits.read(path);
+                    cacheInMemory(url, img);
                     return img;
+                } catch (IOException ignored) {
+                    // A damaged or obsolete cache entry can be recovered from the source URL.
+                    index.remove(url);
                 }
             }
         }
@@ -60,6 +66,7 @@ public class ImageFrameImageCache {
     }
 
     public synchronized void store(String url, BufferedImage image) throws IOException {
+        ImageLimits.checkDimensions(image.getWidth(), image.getHeight());
         ensureCacheDir();
         String fileName = fileNameForUrl(url);
         Path path = cacheDir.resolve(fileName);
@@ -68,7 +75,31 @@ public class ImageFrameImageCache {
         entry.fileName = fileName;
         index.put(url, entry);
         saveIndex();
+        cacheInMemory(url, image);
+    }
+
+    private void cacheInMemory(String url, BufferedImage image) {
+        BufferedImage previous = memoryCache.remove(url);
+        if (previous != null) memoryBytes -= estimatedBytes(previous);
+        long bytes = estimatedBytes(image);
+        if (bytes > ImageLimits.MAX_CACHE_BYTES) return;
+        var entries = memoryCache.entrySet().iterator();
+        while (memoryBytes + bytes > ImageLimits.MAX_CACHE_BYTES && entries.hasNext()) {
+            memoryBytes -= estimatedBytes(entries.next().getValue());
+            entries.remove();
+        }
         memoryCache.put(url, image);
+        memoryBytes += bytes;
+    }
+
+    private static long estimatedBytes(BufferedImage image) {
+        // ImageIO may decode 16-bit RGBA input: reserve up to eight bytes per pixel.
+        return (long) image.getWidth() * image.getHeight() * 8;
+    }
+
+    public synchronized void clearMemory() {
+        memoryCache.clear();
+        memoryBytes = 0;
     }
 
     private void loadIndex() {
@@ -81,7 +112,7 @@ public class ImageFrameImageCache {
                 index.clear();
                 index.putAll(loaded);
             }
-        } catch (IOException ignored) {
+        } catch (IOException | com.google.gson.JsonParseException ignored) {
         }
     }
 

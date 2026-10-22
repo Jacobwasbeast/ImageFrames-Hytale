@@ -29,9 +29,6 @@ ext {
 if (!project.hasProperty('hytaleHome')) {
     throw new GradleException('Your Hytale install could not be detected automatically. If you are on an unsupported platform or using a custom install location, please define the install location using the hytale_home property.');
 }
-else if (!file(project.findProperty('hytaleHome')).exists()) {
-    throw new GradleException("Failed to find Hytale at the expected location. Please make sure you have installed the game. The expected location can be changed using the hytale_home property. Currently looking in ${project.findProperty('hytaleHome')}")
-}
 
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(java_version)
@@ -45,11 +42,18 @@ javadoc {
 
 repositories {
     mavenCentral()
+    maven { url = uri('https://maven.hytale.com/release') }
 }
 
 dependencies {
-    implementation(files("$hytaleHome/install/$patchline/package/game/latest/Server/HytaleServer.jar"))
+    compileOnly("com.hypixel.hytale:Server:$server_version")
+    testImplementation("com.hypixel.hytale:Server:$server_version")
+    testImplementation(platform('org.junit:junit-bom:5.12.2'))
+    testImplementation('org.junit.jupiter:junit-jupiter')
+    testRuntimeOnly('org.junit.platform:junit-platform-launcher')
 }
+
+tasks.named('test') { useJUnitPlatform() }
 
 // Create the working directory to run the server if it does not already exist.
 def serverRunDir = file("$projectDir/run")
@@ -67,6 +71,7 @@ tasks.register('updatePluginManifest') {
         }
         def manifestJson = new groovy.json.JsonSlurper().parseText(manifestFile.text)
         manifestJson.Version = version
+        manifestJson.ServerVersion = "=$server_version"
         manifestJson.IncludesAssetPack = includes_pack.toBoolean()
         manifestFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(manifestJson))
     }

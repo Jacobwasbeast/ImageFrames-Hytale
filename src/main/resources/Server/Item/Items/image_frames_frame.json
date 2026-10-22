@@ -3,7 +3,7 @@
     "Name": "imageFrames.item.frame.name",
     "Description": "imageFrames.item.frame.description"
   },
-  "Category": "Blocks",
+  "Categories": ["Furniture.Furniture"],
   "ItemLevel": 1,
   "MaxStack": 64,
   "Icon": "Icons/ItemsGenerated/ImageFrames/Frame.png",
@@ -28,9 +28,6 @@
     },
     "Tags": {
       "Type": ["Wood"]
-    },
-    "Flags": {
-      "IsUsable": true
     },
     "Interactions": {
       "Use": "ImageFrames_Use"

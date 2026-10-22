@@ -3,6 +3,7 @@ package dev.jacobwasbeast.config;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.hypixel.hytale.server.core.util.io.BlockingDiskFile;
+import dev.jacobwasbeast.util.ImageLimits;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -24,7 +25,7 @@ public class ImageFramesConfig extends BlockingDiskFile {
             ownerLockEnabled = obj.get("ownerLockEnabled").getAsBoolean();
         }
         if (obj.has("tileSize")) {
-            tileSize = Math.max(16, obj.get("tileSize").getAsInt());
+            setTileSize(obj.get("tileSize").getAsInt());
         }
     }
 
@@ -74,6 +75,6 @@ public class ImageFramesConfig extends BlockingDiskFile {
     }
 
     public void setTileSize(int tileSize) {
-        this.tileSize = Math.max(16, tileSize);
+        this.tileSize = Math.clamp(tileSize, 16, ImageLimits.MAX_TILE_SIZE);
     }
 }

@@ -7,8 +7,8 @@ import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.EntityEventSystem;
-import com.hypixel.hytale.math.vector.Vector3d;
-import com.hypixel.hytale.math.vector.Vector3f;
+import org.joml.Vector3d;
+import com.hypixel.hytale.math.vector.Rotation3f;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.event.events.ecs.BreakBlockEvent;
 import com.hypixel.hytale.server.core.inventory.ItemStack;
@@ -38,10 +38,18 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
         if (!isFrameBlock(blockId)) {
             return;
         }
+        if (!plugin.isInitialized()) {
+            event.setCancelled(true);
+            return;
+        }
 
         var world = store.getExternalData().getWorld();
         var group = plugin.getStore().getGroupByPos(world.getName(), event.getTargetBlock());
         if (group != null) {
+            if (!plugin.getRuntimeManager().isGroupLoaded(world, group)) {
+                event.setCancelled(true);
+                return;
+            }
             int count = Math.max(0, group.sizeX * group.sizeY * group.sizeZ);
             if (count > 0) {
                 // Determine which item to drop based on the group's blockId
@@ -58,14 +66,14 @@ public class ImageFrameBreakSystem extends EntityEventSystem<EntityStore, BreakB
                 }
 
                 Vector3d dropPos = new Vector3d(
-                        event.getTargetBlock().getX() + 0.5,
-                        event.getTargetBlock().getY() + 0.5,
-                        event.getTargetBlock().getZ() + 0.5);
+                        event.getTargetBlock().x() + 0.5,
+                        event.getTargetBlock().y() + 0.5,
+                        event.getTargetBlock().z() + 0.5);
                 int remaining = count;
                 while (remaining > 0) {
                     int qty = Math.min(remaining, 64);
                     ItemStack stack = new ItemStack(dropItemId, qty, null);
-                    var holder = ItemComponent.generateItemDrop(store, stack, dropPos, Vector3f.ZERO, 0.0F, 0.0F, 0.0F);
+                    var holder = ItemComponent.generateItemDrop(store, stack, dropPos, Rotation3f.ZERO, 0.0F, 0.0F, 0.0F);
                     if (holder != null) {
                         commandBuffer.addEntity(holder, AddReason.SPAWN);
                     }

@@ -41,6 +41,10 @@ public class ImageFrameInteractionSystem extends EntityEventSystem<EntityStore, 
         if (!isFrameBlock(blockId)) {
             return;
         }
+        if (!plugin.isInitialized()) {
+            event.setCancelled(true);
+            return;
+        }
 
         var ref = archetypeChunk.getReferenceTo(index);
         Player player = store.getComponent(ref, Player.getComponentType());

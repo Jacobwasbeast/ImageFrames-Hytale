@@ -1,26 +1,26 @@
 {
   "TranslationProperties": {
-    "Name": "imageFrames.item.panel.name",
-    "Description": "imageFrames.item.panel.description"
+    "Name": "imageFrames.item.banner.name",
+    "Description": "imageFrames.item.banner.description"
   },
-  "Category": "Blocks",
+  "Categories": ["Furniture.Furniture"],
   "ItemLevel": 1,
   "MaxStack": 64,
-  "Icon": "Icons/ItemsGenerated/ImageFrames/Panel.png",
+  "Icon": "Icons/ItemsGenerated/ImageFrames/Banner.png",
   "BlockType": {
     "Material": "Solid",
     "DrawType": "Model",
     "Opacity": "Transparent",
-    "CustomModel": "Blocks/ImageFrames/Panel.blockymodel",
+    "CustomModel": "Blocks/ImageFrames/Banner.blockymodel",
     "CustomModelTexture": [
       {
-        "Texture": "Blocks/ImageFrames/Panel.png"
+        "Texture": "Blocks/ImageFrames/Banner_Base.png"
       },
       {
-        "Texture": "Blocks/ImageFrames/Panel.png"
+        "Texture": "Blocks/ImageFrames/Banner_Base.png"
       }
     ],
-    "HitboxType": "Panel",
+    "HitboxType": "Banner",
     "VariantRotation": "NESW",
     "Gathering": {
       "Soft": {
@@ -28,17 +28,14 @@
       }
     },
     "BlockParticleSetId": "Wood",
-    "BlockSoundSetId": "Wood",
-    "Flags": {
-      "IsUsable": true
-    },
+    "BlockSoundSetId": "Cloth",
     "Interactions": {
       "Use": "ImageFrames_Use"
     },
-    "ParticleColor": "#684127"
+    "ParticleColor": "#4c4a31"
   },
   "PlayerAnimationsId": "Block",
-  "ItemSoundSetId": "ISS_Blocks_Wood",
+  "ItemSoundSetId": "ISS_Items_Cloth",
   "Interactions": {
     "Primary": "Block_Primary",
     "Secondary": "Block_Secondary"
@@ -48,11 +45,15 @@
     "Input": [
       {
         "ItemId": "Ingredient_Life_Essence",
-        "Quantity": 30
+        "Quantity": 10
       },
       {
         "ResourceTypeId": "Wood_Trunk",
-        "Quantity": 9
+        "Quantity": 3
+      },
+      {
+        "ResourceTypeId": "Rubble",
+        "Quantity": 7
       }
     ],
     "BenchRequirement": [
@@ -62,7 +63,7 @@
         "Categories": ["Furniture_Misc"]
       }
     ],
-    "OutputQuantity": 18
+    "OutputQuantity": 1
   },
   "Tags": {
     "Type": ["Block"]

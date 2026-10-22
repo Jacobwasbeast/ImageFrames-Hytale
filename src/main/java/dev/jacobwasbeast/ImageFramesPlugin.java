@@ -1,22 +1,34 @@
 package dev.jacobwasbeast;
 
+import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
+import com.hypixel.hytale.server.core.asset.LoadAssetEvent;
+import com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.OpenCustomUIInteraction;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
-import com.hypixel.hytale.server.core.modules.interaction.interaction.config.server.OpenCustomUIInteraction;
+import com.hypixel.hytale.server.core.universe.Universe;
+import com.hypixel.hytale.server.core.universe.world.World;
 import dev.jacobwasbeast.config.ImageFramesConfig;
 import dev.jacobwasbeast.interaction.ImageFrameBreakSystem;
 import dev.jacobwasbeast.interaction.ImageFrameInteractionSystem;
 import dev.jacobwasbeast.runtime.ImageFrameRuntimeManager;
 import dev.jacobwasbeast.store.ImageFrameStore;
 import dev.jacobwasbeast.ui.ImageFrameConfigSupplier;
-
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Level;
-import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nonnull;
 
 public class ImageFramesPlugin extends JavaPlugin {
     private static ImageFramesPlugin instance;
-    private final AtomicBoolean initialized = new AtomicBoolean(false);
+    private final ExecutorService assetExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "ImageFrames-assets");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final CompletableFuture<Void> initialization = new CompletableFuture<>();
+    private volatile boolean initialized;
+    private volatile boolean stopping;
     private ImageFramesConfig config;
     private ImageFrameStore store;
     private ImageFrameRuntimeManager runtimeManager;
@@ -28,83 +40,70 @@ public class ImageFramesPlugin extends JavaPlugin {
 
     @Override
     protected void setup() {
-        getLogger().at(Level.INFO).log("ImageFrames setup...");
-        this.getCodecRegistry(OpenCustomUIInteraction.PAGE_CODEC)
+        getCodecRegistry(OpenCustomUIInteraction.PAGE_CODEC)
                 .register("ImageFrames_Config", ImageFrameConfigSupplier.class, ImageFrameConfigSupplier.CODEC);
-
-        this.config = new ImageFramesConfig();
-        this.store = new ImageFrameStore();
-        this.runtimeManager = new ImageFrameRuntimeManager(this, store);
+        config = new ImageFramesConfig();
+        store = new ImageFrameStore();
+        runtimeManager = new ImageFrameRuntimeManager(this, store);
+        getEntityStoreRegistry().registerSystem(new ImageFrameInteractionSystem(this));
+        getEntityStoreRegistry().registerSystem(new ImageFrameBreakSystem(this));
+        getEventRegistry().registerGlobal(PlayerReadyEvent.class, event -> {
+            World world = event.getPlayer().getWorld();
+            initialization.thenRun(() -> refreshWorld(world));
+        });
+        // Restore dynamic block types before world sections can deserialize their saved ids.
+        getEventRegistry().register(LoadAssetEvent.PRIORITY_LOAD_LATE, LoadAssetEvent.class, event -> {
+            try {
+                config.syncLoad();
+                store.syncLoad();
+                runtimeManager.init();
+                initialized = true;
+                initialization.complete(null);
+            } catch (Exception e) {
+                initialization.completeExceptionally(e);
+                event.failed(true, "ImageFrames runtime assets could not be initialized");
+                getLogger().at(Level.SEVERE).withCause(e).log("Failed to initialize ImageFrames");
+            }
+        });
     }
 
     @Override
     protected void start() {
-        getLogger().at(Level.INFO).log("ImageFrames starting...");
+        if (!isInitialized()) return;
+        runtimeManager.startIntegrityChecks(2);
+        Universe.get().getUniverseReady().thenRun(() -> {
+            for (World world : Universe.get().getWorlds().values()) {
+                refreshWorld(world);
+            }
+        });
+        getLogger().at(Level.INFO).log("ImageFrames initialized for Hytale 0.7.3.");
+    }
 
-        var entityRegistry = com.hypixel.hytale.server.core.modules.entity.EntityModule.get().getEntityStoreRegistry();
-        entityRegistry.registerSystem(new ImageFrameInteractionSystem(this));
-        entityRegistry.registerSystem(new ImageFrameBreakSystem(this));
-
-        if (initialized.compareAndSet(false, true)) {
-            getLogger().at(Level.INFO).log("Server start. Starting async initialization...");
-            new Thread(() -> {
-                try {
-                    this.config.syncLoad();
-                    this.store.syncLoad();
-                    this.runtimeManager.init();
-
-                    com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR.execute(() -> {
-                        getLogger().at(Level.INFO).log("Async init complete. Broadcasting assets.");
-                        this.runtimeManager.broadcastRuntimeAssets();
-                        var defaultWorld = com.hypixel.hytale.server.core.universe.Universe.get().getDefaultWorld();
-                        if (defaultWorld != null) {
-                            this.runtimeManager.refreshFramesForWorld(defaultWorld);
-                        }
-                    });
-                } catch (Exception e) {
-                    getLogger().at(Level.SEVERE).withCause(e)
-                            .log("Failed to initialize ImageFrames asynchronously");
-                }
-            }).start();
-        }
-
-        com.hypixel.hytale.server.core.HytaleServer.get().getEventBus().registerGlobal(
-                com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent.class,
-                event -> {
-                    if (initialized.compareAndSet(false, true)) {
-                        getLogger().at(Level.INFO).log("First player joined. Starting async initialization...");
-                        new Thread(() -> {
-                            try {
-                                this.config.syncLoad();
-                                this.store.syncLoad();
-                                this.runtimeManager.init();
-
-                                com.hypixel.hytale.server.core.HytaleServer.SCHEDULED_EXECUTOR.execute(() -> {
-                                    getLogger().at(Level.INFO).log("Async init complete. Broadcasting assets.");
-                                    this.runtimeManager.startIntegrityChecks(2);
-                                    this.runtimeManager.broadcastRuntimeAssets();
-                                    this.runtimeManager.refreshFramesForWorld(event.getPlayer().getWorld());
-                                });
-                            } catch (Exception e) {
-                                getLogger().at(Level.SEVERE).withCause(e)
-                                        .log("Failed to initialize ImageFrames asynchronously");
-                            }
-                        }).start();
-                        initialized.set(true);
-                        return;
-                    }
-                    // Always broadcast/refresh on join to ensure client sync
-                    getLogger().at(Level.INFO).log("Player ready. Broadcasting ImageFrames assets.");
-                    this.runtimeManager.broadcastRuntimeAssets();
-                    this.runtimeManager.refreshFramesForWorld(event.getPlayer().getWorld());
-                });
-
-        getLogger().at(Level.INFO).log("ImageFrames started.");
+    private void refreshWorld(World world) {
+        if (world == null || stopping) return;
+        world.execute(() -> {
+            if (stopping || !world.isAlive()) return;
+            runtimeManager.broadcastRuntimeAssets();
+            runtimeManager.refreshFramesForWorld(world);
+        });
     }
 
     @Override
     protected void shutdown() {
-        getLogger().at(Level.INFO).log("ImageFrames shutting down.");
+        stopping = true;
+        initialized = false;
+        initialization.cancel(false);
+        if (runtimeManager != null) runtimeManager.shutdown();
+        assetExecutor.shutdownNow();
+        instance = null;
+    }
+
+    public boolean isInitialized() {
+        return initialized && !stopping;
+    }
+
+    public ExecutorService getAssetExecutor() {
+        return assetExecutor;
     }
 
     public static ImageFramesPlugin getInstance() {

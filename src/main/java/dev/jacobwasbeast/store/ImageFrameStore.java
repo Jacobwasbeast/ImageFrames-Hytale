@@ -3,7 +3,7 @@ package dev.jacobwasbeast.store;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
-import com.hypixel.hytale.math.vector.Vector3i;
+import org.joml.Vector3i;
 import com.hypixel.hytale.server.core.util.io.BlockingDiskFile;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -22,7 +22,11 @@ public class ImageFrameStore extends BlockingDiskFile {
     private final Map<String, String> posIndex = new HashMap<>();
 
     public ImageFrameStore() {
-        super(Path.of("ImageFrames/frames.json"));
+        this(Path.of("ImageFrames/frames.json"));
+    }
+
+    ImageFrameStore(Path path) {
+        super(path);
         ensureParent();
     }
 
@@ -33,6 +37,15 @@ public class ImageFrameStore extends BlockingDiskFile {
         groups.clear();
         if (loaded != null) {
             groups.putAll(loaded);
+        }
+        for (FrameGroup group : groups.values()) {
+            if (group == null) continue;
+            group.blockId = switch (group.blockId == null ? "" : group.blockId) {
+                case "image_frames:frame" -> "image_frames_frame";
+                case "image_frames:panel" -> "image_frames_panel";
+                case "image_frames:banner" -> "image_frames_banner";
+                default -> group.blockId;
+            };
         }
         rebuildIndex();
     }
@@ -54,7 +67,7 @@ public class ImageFrameStore extends BlockingDiskFile {
     }
 
     private java.nio.file.Path getPath() {
-        return java.nio.file.Path.of("ImageFrames/frames.json");
+        return path;
     }
 
     private void ensureParent() {
@@ -84,7 +97,7 @@ public class ImageFrameStore extends BlockingDiskFile {
     }
 
     public synchronized FrameGroup getGroupByPos(String worldName, Vector3i pos) {
-        String key = toPosKey(worldName, pos.getX(), pos.getY(), pos.getZ());
+        String key = toPosKey(worldName, pos.x(), pos.y(), pos.z());
         String groupId = posIndex.get(key);
         return groupId != null ? groups.get(groupId) : null;
     }

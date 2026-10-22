@@ -120,5 +120,31 @@ You can craft Image Frames and Panels at a **Furniture Bench**.
 
 ## Installation
 
-1.  Build the project using `./gradlew build`.
+1.  Install JDK 25 and build the project using `./gradlew build` (`gradlew.bat build` on Windows).
 2.  Place the generated JAR file into your Hytale's `mods` directory.
+
+## Hytale 0.7.3 compatibility
+
+This version targets **Hytale 0.7.3**. Gradle downloads the pinned server API from
+Hytale's official release Maven repository, so building and running the unit tests
+does not require a local game installation. A game installation is still required
+for the IDE server launch configurations; use `-Phytale_home=...` for a custom path.
+
+Block reads, writes and rotations use the section APIs, including negative heights
+and heights above 320 in cubic worlds. Runtime textures and models are registered
+during asset loading, before saved world sections load. The integrity check starts
+with the plugin, and world operations run on the world thread.
+
+Saved frame groups using the original `image_frames:frame`, `image_frames:panel`
+or `image_frames:banner` item IDs are mapped to the underscore IDs on load. Their
+stored tile IDs and positions are preserved.
+
+Image processing is bounded to 16 MiB per HTTP download, 16 megapixels per source
+or rendered image, 256 blocks per frame, and a tile size between 16 and 1024 pixels.
+The decoded image cache uses at most 64 MiB of estimated pixel storage and retains
+its disk cache when evicting entries. Oversized saved layouts are rejected before
+world loading; their saved data is retained.
+
+Run `./gradlew build` to compile, package and execute the regression tests. See
+[the 0.7.3 validation notes](docs/hytale-0.7.3.md) for server checks and remaining
+manual verification.
